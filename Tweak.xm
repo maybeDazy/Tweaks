@@ -1,82 +1,113 @@
-#import <Foundation/Foundation.h>
+#import <UIKit/UIKit.h>
 #import <AVFoundation/AVFoundation.h>
 #import <AudioToolbox/AudioToolbox.h>
-#import <UIKit/UIKit.h>
-#import <objc/runtime.h>
+#import <notify.h>
 
-// VolumeChordRecorder
-// Personal-use tweak: hold volume up + volume down together for 2 seconds to toggle recording.
-// It intentionally gives vibration feedback and NSLog output. It does not attempt to hide recording.
+static NSString * const VCRPrefsID = @"com.yourname.volumechordrecorder";
+static NSString * const VCRPrefix = @"[VolumeChordRecorder]";
 
-static BOOL vcrUpPressed = NO;
-static BOOL vcrDownPressed = NO;
-static BOOL vcrIsRecording = NO;
-static NSTimer *vcrHoldTimer = nil;
-static AVAudioRecorder *vcrRecorder = nil;
-static NSDateFormatter *vcrDateFormatter = nil;
+static BOOL vcrEnabled = YES;
+static BOOL vcrHaptics = YES;
+static BOOL vcrLogPresses = YES;
+static NSTimeInterval vcrHoldSeconds = 2.0;
+static NSTimeInterval vcrMaxRecordSeconds = 600.0;
 
-static NSString * const VCRLogPrefix = @"[VolumeChordRecorder]";
+static BOOL volumeUpPressed = NO;
+static BOOL volumeDownPressed = NO;
+static NSTimer *holdTimer = nil;
+static NSTimer *maxRecordTimer = nil;
+static AVAudioRecorder *recorder = nil;
+static BOOL isRecording = NO;
 
-static void VCRLog(NSString *format, ...) {
+static void VCRLog(NSString *fmt, ...) {
     va_list args;
-    va_start(args, format);
-    NSString *msg = [[NSString alloc] initWithFormat:format arguments:args];
+    va_start(args, fmt);
+    NSString *msg = [[NSString alloc] initWithFormat:fmt arguments:args];
     va_end(args);
-    NSLog(@"%@ %@", VCRLogPrefix, msg);
+    NSLog(@"%@ %@", VCRPrefix, msg);
 }
 
-static void VCRVibrate(void) {
-    AudioServicesPlaySystemSound(kSystemSoundID_Vibrate);
+static BOOL VCRBoolPref(NSString *key, BOOL fallback) {
+    CFPreferencesAppSynchronize((__bridge CFStringRef)VCRPrefsID);
+    CFPropertyListRef value = CFPreferencesCopyAppValue((__bridge CFStringRef)key, (__bridge CFStringRef)VCRPrefsID);
+    if (!value) return fallback;
+    BOOL result = fallback;
+    if (CFGetTypeID(value) == CFBooleanGetTypeID()) result = CFBooleanGetValue((CFBooleanRef)value);
+    else if (CFGetTypeID(value) == CFNumberGetTypeID()) CFNumberGetValue((CFNumberRef)value, kCFNumberCharType, &result);
+    CFRelease(value);
+    return result;
+}
+
+static double VCRDoublePref(NSString *key, double fallback, double minValue, double maxValue) {
+    CFPreferencesAppSynchronize((__bridge CFStringRef)VCRPrefsID);
+    CFPropertyListRef value = CFPreferencesCopyAppValue((__bridge CFStringRef)key, (__bridge CFStringRef)VCRPrefsID);
+    if (!value) return fallback;
+    double result = fallback;
+    if (CFGetTypeID(value) == CFNumberGetTypeID()) CFNumberGetValue((CFNumberRef)value, kCFNumberDoubleType, &result);
+    CFRelease(value);
+    if (result < minValue) result = minValue;
+    if (result > maxValue) result = maxValue;
+    return result;
+}
+
+static void VCRLoadPrefs(void) {
+    vcrEnabled = VCRBoolPref(@"enabled", YES);
+    vcrHaptics = VCRBoolPref(@"haptics", YES);
+    vcrLogPresses = VCRBoolPref(@"logPresses", YES);
+    vcrHoldSeconds = VCRDoublePref(@"holdSeconds", 2.0, 0.5, 10.0);
+    vcrMaxRecordSeconds = VCRDoublePref(@"maxRecordSeconds", 600.0, 5.0, 7200.0);
+    VCRLog(@"Prefs loaded enabled=%d hold=%.2fs max=%.0fs haptics=%d logPresses=%d", vcrEnabled, vcrHoldSeconds, vcrMaxRecordSeconds, vcrHaptics, vcrLogPresses);
+}
+
+static void VCRPlayHaptic(SystemSoundID soundID) {
+    if (!vcrHaptics) return;
+    AudioServicesPlaySystemSound(soundID);
+}
+
+static void VCRHapticStart(void) {
+    // Recording started: one short, light vibration.
+    VCRPlayHaptic(1519);
+}
+
+static void VCRHapticStop(void) {
+    // Recording stopped: two short vibrations so it is distinguishable from start.
+    VCRPlayHaptic(1520);
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.16 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        VCRPlayHaptic(1520);
+    });
 }
 
 static NSString *VCRRecordingDirectory(void) {
     return @"/var/mobile/Media/VolumeChordRecorder";
 }
 
-static NSString *VCRTimestamp(void) {
-    if (!vcrDateFormatter) {
-        vcrDateFormatter = [NSDateFormatter new];
-        [vcrDateFormatter setDateFormat:@"yyyyMMdd_HHmmss"];
-        [vcrDateFormatter setLocale:[NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"]];
-    }
-    return [vcrDateFormatter stringFromDate:[NSDate date]];
+static NSString *VCRTimestampFilename(void) {
+    NSDateFormatter *fmt = [NSDateFormatter new];
+    fmt.dateFormat = @"yyyyMMdd_HHmmss";
+    return [NSString stringWithFormat:@"VCR_%@.m4a", [fmt stringFromDate:[NSDate date]]];
 }
 
-static NSString *VCRNewRecordingPath(void) {
+static void VCRStopRecording(void);
+
+static void VCRStartRecording(void) {
+    if (isRecording) return;
+
+    NSError *error = nil;
     NSString *dir = VCRRecordingDirectory();
-    NSError *dirError = nil;
-    [[NSFileManager defaultManager] createDirectoryAtPath:dir
-                              withIntermediateDirectories:YES
-                                               attributes:@{NSFilePosixPermissions: @0755}
-                                                    error:&dirError];
-    if (dirError) {
-        VCRLog(@"Failed creating recording dir %@ error=%@", dir, dirError);
-    }
-    return [dir stringByAppendingPathComponent:[NSString stringWithFormat:@"VCR_%@.m4a", VCRTimestamp()]];
-}
-
-static BOOL VCRStartRecording(void) {
-    if (vcrIsRecording) {
-        VCRLog(@"Already recording");
-        return YES;
+    [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:&error];
+    if (error) {
+        VCRLog(@"Failed to create recording dir: %@", error);
+        return;
     }
 
-    NSError *sessionError = nil;
     AVAudioSession *session = [AVAudioSession sharedInstance];
-    [session setCategory:AVAudioSessionCategoryRecord error:&sessionError];
-    if (sessionError) {
-        VCRLog(@"AVAudioSession setCategory failed: %@", sessionError);
-        return NO;
-    }
+    [session setCategory:AVAudioSessionCategoryRecord error:&error];
+    if (error) VCRLog(@"AVAudioSession category error: %@", error);
+    error = nil;
+    [session setActive:YES error:&error];
+    if (error) VCRLog(@"AVAudioSession active error: %@", error);
 
-    sessionError = nil;
-    [session setActive:YES error:&sessionError];
-    if (sessionError) {
-        VCRLog(@"AVAudioSession setActive failed: %@", sessionError);
-        return NO;
-    }
-
-    NSString *path = VCRNewRecordingPath();
+    NSString *path = [dir stringByAppendingPathComponent:VCRTimestampFilename()];
     NSURL *url = [NSURL fileURLWithPath:path];
     NSDictionary *settings = @{
         AVFormatIDKey: @(kAudioFormatMPEG4AAC),
@@ -85,143 +116,122 @@ static BOOL VCRStartRecording(void) {
         AVEncoderAudioQualityKey: @(AVAudioQualityHigh)
     };
 
-    NSError *recorderError = nil;
-    vcrRecorder = [[AVAudioRecorder alloc] initWithURL:url settings:settings error:&recorderError];
-    if (recorderError || !vcrRecorder) {
-        VCRLog(@"AVAudioRecorder init failed: %@", recorderError);
-        return NO;
-    }
-
-    [vcrRecorder prepareToRecord];
-    BOOL ok = [vcrRecorder record];
-    if (!ok) {
-        VCRLog(@"AVAudioRecorder record returned NO");
-        vcrRecorder = nil;
-        return NO;
-    }
-
-    vcrIsRecording = YES;
-    VCRVibrate();
-    VCRLog(@"Recording started: %@", path);
-    return YES;
-}
-
-static void VCRStopRecording(void) {
-    if (!vcrIsRecording) {
-        VCRLog(@"Not recording");
+    recorder = [[AVAudioRecorder alloc] initWithURL:url settings:settings error:&error];
+    if (error || !recorder) {
+        VCRLog(@"Recorder init failed: %@", error);
+        recorder = nil;
         return;
     }
 
-    [vcrRecorder stop];
-    vcrRecorder = nil;
-    vcrIsRecording = NO;
-
-    NSError *sessionError = nil;
-    [[AVAudioSession sharedInstance] setActive:NO error:&sessionError];
-    if (sessionError) {
-        VCRLog(@"AVAudioSession deactivate warning: %@", sessionError);
+    [recorder prepareToRecord];
+    if ([recorder record]) {
+        isRecording = YES;
+        VCRHapticStart();
+        VCRLog(@"Recording started: %@", path);
+        if (maxRecordTimer) [maxRecordTimer invalidate];
+        maxRecordTimer = [NSTimer scheduledTimerWithTimeInterval:vcrMaxRecordSeconds repeats:NO block:^(__unused NSTimer *timer) {
+            VCRLog(@"Max recording time reached, stopping");
+            VCRStopRecording();
+        }];
+    } else {
+        VCRLog(@"Recorder failed to start");
+        recorder = nil;
     }
+}
 
-    VCRVibrate();
-    VCRLog(@"Recording stopped. Files are in %@", VCRRecordingDirectory());
+static void VCRStopRecording(void) {
+    if (!isRecording) return;
+    if (maxRecordTimer) {
+        [maxRecordTimer invalidate];
+        maxRecordTimer = nil;
+    }
+    [recorder stop];
+    recorder = nil;
+    [[AVAudioSession sharedInstance] setActive:NO error:nil];
+    isRecording = NO;
+    VCRHapticStop();
+    VCRLog(@"Recording stopped");
 }
 
 static void VCRToggleRecording(void) {
-    if (vcrIsRecording) {
-        VCRStopRecording();
-    } else {
-        VCRStartRecording();
-    }
+    if (isRecording) VCRStopRecording();
+    else VCRStartRecording();
 }
 
 static void VCRCancelHoldTimer(void) {
-    if (vcrHoldTimer) {
-        [vcrHoldTimer invalidate];
-        vcrHoldTimer = nil;
-        VCRLog(@"Hold timer cancelled");
+    if (holdTimer) {
+        [holdTimer invalidate];
+        holdTimer = nil;
     }
 }
 
 static void VCRCheckChord(void) {
-    if (vcrUpPressed && vcrDownPressed) {
-        if (!vcrHoldTimer) {
-            VCRLog(@"Volume chord detected. Hold for 2 seconds to toggle recording.");
-            vcrHoldTimer = [NSTimer scheduledTimerWithTimeInterval:2.0 repeats:NO block:^(NSTimer *timer) {
-                vcrHoldTimer = nil;
-                if (vcrUpPressed && vcrDownPressed) {
-                    VCRLog(@"Volume chord held for 2 seconds. Toggling recording.");
-                    VCRToggleRecording();
-                } else {
-                    VCRLog(@"Chord released before 2 seconds");
-                }
-            }];
-        }
-    } else {
+    if (!vcrEnabled) {
+        VCRCancelHoldTimer();
+        return;
+    }
+
+    if (volumeUpPressed && volumeDownPressed && !holdTimer) {
+        VCRLog(@"Volume chord detected, hold %.2fs...", vcrHoldSeconds);
+        holdTimer = [NSTimer scheduledTimerWithTimeInterval:vcrHoldSeconds repeats:NO block:^(__unused NSTimer *timer) {
+            holdTimer = nil;
+            if (volumeUpPressed && volumeDownPressed && vcrEnabled) {
+                VCRLog(@"Volume chord confirmed");
+                VCRToggleRecording();
+            }
+        }];
+    }
+
+    if (!volumeUpPressed || !volumeDownPressed) {
         VCRCancelHoldTimer();
     }
 }
 
-static NSString *VCRDescribeUIPress(UIPress *press) {
-    if (!press) return @"<nil>";
-    return [NSString stringWithFormat:@"type=%ld phase=%ld force=%.2f", (long)press.type, (long)press.phase, press.force];
-}
-
-// IMPORTANT:
-// UIPressType values for volume buttons vary by iOS/device. The defaults below are common candidates.
-// If detection does not work, run log stream and inspect messages like:
-//   [VolumeChordRecorder] pressesBegan candidate type=...
-// Then adjust these functions.
-static BOOL VCRPressLooksLikeVolumeUp(UIPress *press) {
-    if (!press) return NO;
-    NSInteger t = (NSInteger)press.type;
-    return (t == 102 || t == 100); // candidate values; edit after checking logs if needed
-}
-
-static BOOL VCRPressLooksLikeVolumeDown(UIPress *press) {
-    if (!press) return NO;
-    NSInteger t = (NSInteger)press.type;
-    return (t == 103 || t == 101); // candidate values; edit after checking logs if needed
-}
-
-static void VCRHandlePresses(NSSet<UIPress *> *presses, BOOL began) {
-    for (UIPress *press in presses) {
-        VCRLog(@"%@ candidate %@", began ? @"pressesBegan" : @"pressesEnded", VCRDescribeUIPress(press));
-        if (VCRPressLooksLikeVolumeUp(press)) {
-            vcrUpPressed = began;
-            VCRLog(@"Volume UP %@", began ? @"DOWN" : @"UP");
-        }
-        if (VCRPressLooksLikeVolumeDown(press)) {
-            vcrDownPressed = began;
-            VCRLog(@"Volume DOWN %@", began ? @"DOWN" : @"UP");
-        }
-    }
-    VCRCheckChord();
-}
+// NOTE: This intentionally does NOT try to suppress Apple's microphone privacy indicator.
+// iOS shows that indicator to tell the user the microphone is active.
 
 %hook SpringBoard
 
-- (void)applicationDidFinishLaunching:(id)application {
-    %orig;
-    VCRLog(@"Loaded into com.apple.springboard. Recording dir=%@", VCRRecordingDirectory());
-}
-
 - (void)pressesBegan:(NSSet<UIPress *> *)presses withEvent:(UIPressesEvent *)event {
-    VCRHandlePresses(presses, YES);
+    for (UIPress *press in presses) {
+        NSInteger type = press.type;
+        if (vcrLogPresses) VCRLog(@"press began type=%ld", (long)type);
+        if (type == UIPressTypeVolumeUp) volumeUpPressed = YES;
+        if (type == UIPressTypeVolumeDown) volumeDownPressed = YES;
+    }
+    VCRCheckChord();
     %orig;
 }
 
 - (void)pressesEnded:(NSSet<UIPress *> *)presses withEvent:(UIPressesEvent *)event {
-    VCRHandlePresses(presses, NO);
+    for (UIPress *press in presses) {
+        NSInteger type = press.type;
+        if (vcrLogPresses) VCRLog(@"press ended type=%ld", (long)type);
+        if (type == UIPressTypeVolumeUp) volumeUpPressed = NO;
+        if (type == UIPressTypeVolumeDown) volumeDownPressed = NO;
+    }
+    VCRCheckChord();
     %orig;
 }
 
 - (void)pressesCancelled:(NSSet<UIPress *> *)presses withEvent:(UIPressesEvent *)event {
-    VCRHandlePresses(presses, NO);
+    volumeUpPressed = NO;
+    volumeDownPressed = NO;
+    VCRCancelHoldTimer();
     %orig;
 }
 
 %end
 
 %ctor {
-    VCRLog(@"ctor loaded in bundle=%@ process=%@", [[NSBundle mainBundle] bundleIdentifier], [[NSProcessInfo processInfo] processName]);
+    VCRLoadPrefs();
+    int token = 0;
+    notify_register_dispatch("com.yourname.volumechordrecorder.prefschanged", &token, dispatch_get_main_queue(), ^(__unused int t) {
+        VCRLoadPrefs();
+        if (!vcrEnabled && isRecording) {
+            VCRLog(@"Disabled from Settings while recording, stopping");
+            VCRStopRecording();
+        }
+    });
+    VCRLog(@"Loaded into %@", [[NSBundle mainBundle] bundleIdentifier]);
 }

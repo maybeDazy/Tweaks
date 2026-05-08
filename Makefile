@@ -1,21 +1,18 @@
-# VolumeChordRecorder - Theos tweak project
-# Windows build path: WSL2 Ubuntu + Theos
-# Supported package schemes:
-#   rootless: make clean package THEOS_PACKAGE_SCHEME=rootless
-#   roothide: make clean package THEOS_PACKAGE_SCHEME=roothide
-
 ARCHS = arm64 arm64e
-TARGET = iphone:clang:latest:15.0
+TARGET = iphone:clang:latest:14.0
+INSTALL_TARGET_PROCESSES = SpringBoard Preferences
 
-# Default to rootless. Override on command line for RootHide:
-# make package THEOS_PACKAGE_SCHEME=roothide
-THEOS_PACKAGE_SCHEME ?= rootless
+# Build with:
+#   make package THEOS_PACKAGE_SCHEME=roothide FINALPACKAGE=1
+#   make package THEOS_PACKAGE_SCHEME=rootless FINALPACKAGE=1
 
 include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME = VolumeChordRecorder
 VolumeChordRecorder_FILES = Tweak.xm
 VolumeChordRecorder_CFLAGS = -fobjc-arc
-VolumeChordRecorder_FRAMEWORKS = Foundation AVFoundation AudioToolbox UIKit
+VolumeChordRecorder_FRAMEWORKS = UIKit AVFoundation AudioToolbox
 
 include $(THEOS_MAKE_PATH)/tweak.mk
+SUBPROJECTS += Preferences
+include $(THEOS_MAKE_PATH)/aggregate.mk

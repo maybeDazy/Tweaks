@@ -1,9 +1,9 @@
-Package: com.example.volumechordrecorder
+Package: com.yourname.volumechordrecorder
 Name: VolumeChordRecorder
-Version: 0.2.0
+Version: 0.0.3
 Architecture: iphoneos-arm
-Description: Start/stop an audible-feedback voice memo by holding volume up + down for 2 seconds. Personal-use tweak with vibration/log feedback.
-Maintainer: local
-Author: local
+Description: Volume Up + Down long-press voice recorder tweak with Settings bundle.
+Maintainer: yourname
+Author: yourname
 Section: Tweaks
-Depends: mobilesubstrate
+Depends: mobilesubstrate, preferenceloader

@@ -1,0 +1,8 @@
+{
+  entry = {
+    bundle = VolumeChordRecorderPrefs;
+    cell = PSLinkCell;
+    label = "Volume Chord Recorder";
+    icon = "/Library/PreferenceBundles/VolumeChordRecorderPrefs.bundle/icon.png";
+  };
+}

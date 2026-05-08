@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>title</key>
+    <string>Volume Chord Recorder</string>
+    <key>items</key>
+    <array>
+        <dict>
+            <key>cell</key>
+            <string>PSGroupCell</string>
+            <key>label</key>
+            <string>Main</string>
+            <key>footerText</key>
+            <string>Press Volume Up + Volume Down together and hold to start/stop recording. Apple's microphone privacy indicator is not disabled or hidden.</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSSwitchCell</string>
+            <key>label</key>
+            <string>Enable Tweak</string>
+            <key>key</key>
+            <string>enabled</string>
+            <key>default</key>
+            <true/>
+            <key>defaults</key>
+            <string>com.yourname.volumechordrecorder</string>
+            <key>PostNotification</key>
+            <string>com.yourname.volumechordrecorder.prefschanged</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSEditTextCell</string>
+            <key>keyboard</key>
+            <string>decimal</string>
+            <key>label</key>
+            <string>Hold Seconds</string>
+            <key>key</key>
+            <string>holdSeconds</string>
+            <key>default</key>
+            <real>2.0</real>
+            <key>defaults</key>
+            <string>com.yourname.volumechordrecorder</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSEditTextCell</string>
+            <key>keyboard</key>
+            <string>number</string>
+            <key>label</key>
+            <string>Max Record Seconds</string>
+            <key>key</key>
+            <string>maxRecordSeconds</string>
+            <key>default</key>
+            <integer>600</integer>
+            <key>defaults</key>
+            <string>com.yourname.volumechordrecorder</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSSwitchCell</string>
+            <key>label</key>
+            <string>Haptic Feedback</string>
+            <key>key</key>
+            <string>haptics</string>
+            <key>default</key>
+            <true/>
+            <key>defaults</key>
+            <string>com.yourname.volumechordrecorder</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSSwitchCell</string>
+            <key>label</key>
+            <string>Debug Button Logs</string>
+            <key>key</key>
+            <string>logPresses</string>
+            <key>default</key>
+            <true/>
+            <key>defaults</key>
+            <string>com.yourname.volumechordrecorder</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSGroupCell</string>
+            <key>label</key>
+            <string>Info</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSButtonCell</string>
+            <key>label</key>
+            <string>Show Recording Path</string>
+            <key>action</key>
+            <string>openRecordingsFolder</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSButtonCell</string>
+            <key>label</key>
+            <string>Respring</string>
+            <key>action</key>
+            <string>respring</string>
+        </dict>
+    </array>
+</dict>
+</plist>

@@ -1,0 +1,64 @@
+name: Build RootHide Theos Deb
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install apt dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y \
+            build-essential \
+            clang \
+            git \
+            perl \
+            python3 \
+            fakeroot \
+            dpkg-dev \
+            xz-utils \
+            libplist-utils \
+            curl \
+            ca-certificates \
+            make
+
+      - name: Install RootHide Theos
+        run: |
+          bash -c "$(curl -fsSL https://raw.githubusercontent.com/roothide/theos/master/bin/install-theos)"
+          echo "THEOS=$HOME/theos" >> $GITHUB_ENV
+          echo "$HOME/theos/bin" >> $GITHUB_PATH
+
+      - name: Verify RootHide Theos
+        run: |
+          echo "THEOS=$THEOS"
+          find "$THEOS" -iname "*roothide*" -print
+          test -e "$THEOS/vendor/mod/roothide"
+
+      - name: Ensure iPhoneOS SDK
+        run: |
+          if ls "$THEOS/sdks"/iPhoneOS*.sdk >/dev/null 2>&1; then
+            echo "SDK already exists, skipping install-sdk"
+            ls -la "$THEOS/sdks"
+          else
+            "$THEOS/bin/install-sdk" latest || true
+            ls -la "$THEOS/sdks"
+          fi
+
+      - name: Build roothide package
+        run: |
+          make clean
+          make package THEOS_PACKAGE_SCHEME=roothide FINALPACKAGE=1
+
+      - name: Upload deb
+        uses: actions/upload-artifact@v4
+        with:
+          name: VolumeChordRecorder-roothide-deb
+          path: packages/*.deb
