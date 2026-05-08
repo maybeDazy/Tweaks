@@ -127,3 +127,13 @@ log stream --predicate 'eventMessage contains "VolumeChordRecorder"' --info
 #define VCR_PRESS_TYPE_VOLUME_UP 102
 #define VCR_PRESS_TYPE_VOLUME_DOWN 103
 ```
+
+
+## 2026-05-08 Fix: Preferences ARC compile error
+
+`Preferences/VCRRootListController.mm` was updated for ARC builds:
+
+- Removed manual `retain` from `_specifiers` assignment.
+- Removed manual `autorelease` after `CFBridgingRelease`.
+- Added `@import Darwin.POSIX.spawn;` so `posix_spawn` is visible under the iPhoneOS16.5 SDK module build.
+

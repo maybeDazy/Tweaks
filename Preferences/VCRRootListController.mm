@@ -2,6 +2,7 @@
 #import <Preferences/PSListController.h>
 #import <Preferences/PSSpecifier.h>
 #import <notify.h>
+@import Darwin.POSIX.spawn;
 
 static NSString * const VCRPrefsID = @"com.yourname.volumechordrecorder";
 
@@ -12,7 +13,7 @@ static NSString * const VCRPrefsID = @"com.yourname.volumechordrecorder";
 
 - (NSArray *)specifiers {
     if (!_specifiers) {
-        _specifiers = [[self loadSpecifiersFromPlistName:@"Root" target:self] retain];
+        _specifiers = [self loadSpecifiersFromPlistName:@"Root" target:self];
     }
     return _specifiers;
 }
@@ -23,7 +24,7 @@ static NSString * const VCRPrefsID = @"com.yourname.volumechordrecorder";
     CFPreferencesAppSynchronize((__bridge CFStringRef)VCRPrefsID);
     CFPropertyListRef value = CFPreferencesCopyAppValue((__bridge CFStringRef)key, (__bridge CFStringRef)VCRPrefsID);
     if (!value) return defaultValue;
-    return [(id)CFBridgingRelease(value) autorelease];
+    return CFBridgingRelease(value);
 }
 
 - (void)setPreferenceValue:(id)value specifier:(PSSpecifier *)specifier {
