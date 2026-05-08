@@ -1,4 +1,4 @@
-name: Build Theos Deb
+name: Build RootHide Theos Deb
 
 on:
   workflow_dispatch:
@@ -8,9 +8,6 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-
-    env:
-      THEOS: /home/runner/theos
 
     steps:
       - name: Checkout
@@ -30,15 +27,24 @@ jobs:
             xz-utils \
             libplist-utils \
             curl \
-            ca-certificates
+            ca-certificates \
+            make
 
-      - name: Install Theos
+      - name: Install RootHide Theos
         run: |
-          git clone --recursive https://github.com/theos/theos.git "$THEOS"
+          bash -c "$(curl -fsSL https://raw.githubusercontent.com/roothide/theos/master/bin/install-theos)"
+          echo "THEOS=$HOME/theos" >> $GITHUB_ENV
+          echo "$HOME/theos/bin" >> $GITHUB_PATH
+
+      - name: Verify roothide scheme
+        run: |
+          echo "THEOS=$THEOS"
+          find "$THEOS" -iname "*roothide*" -print
+          test -d "$THEOS/makefiles/package/roothide" || test -f "$THEOS/makefiles/package/roothide.mk"
 
       - name: Install iPhoneOS SDK
         run: |
-          "$THEOS/bin/install-sdk" latest
+          "$THEOS/bin/install-sdk" 16.5
 
       - name: Build roothide package
         run: |
