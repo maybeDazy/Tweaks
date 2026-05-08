@@ -9,28 +9,36 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
+    env:
+      THEOS: /home/runner/theos
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install dependencies
+      - name: Install apt dependencies
         run: |
           sudo apt update
           sudo apt install -y \
             build-essential \
             clang \
-            ldid \
             git \
             perl \
             python3 \
             fakeroot \
             dpkg-dev \
-            libplist-utils
+            xz-utils \
+            libplist-utils \
+            curl \
+            ca-certificates
 
       - name: Install Theos
         run: |
-          git clone --recursive https://github.com/theos/theos.git $HOME/theos
-          echo "THEOS=$HOME/theos" >> $GITHUB_ENV
+          git clone --recursive https://github.com/theos/theos.git "$THEOS"
+
+      - name: Install iPhoneOS SDK
+        run: |
+          "$THEOS/bin/install-sdk" latest
 
       - name: Build roothide package
         run: |
@@ -40,5 +48,5 @@ jobs:
       - name: Upload deb
         uses: actions/upload-artifact@v4
         with:
-          name: VolumeChordRecorder-deb
+          name: VolumeChordRecorder-roothide-deb
           path: packages/*.deb
