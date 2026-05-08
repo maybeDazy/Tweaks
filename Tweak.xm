@@ -4,9 +4,20 @@
 #import <notify.h>
 
 // ── 프라이빗 클래스 선언 ──────────────────────────────────────
-// @class 만으로는 상속 관계를 모르므로 self.view 접근 불가.
-// UIViewController 상속을 명시해야 컴파일 가능.
+// UIView 계열: hidden/alpha 접근을 위해 상속 명시
+@interface _UIStatusBarIndicatorBlobView : UIView
+@end
 
+@interface _UIStatusBarPrivacyIndicatorItemView : UIView
+@end
+
+@interface _UIPrivacyIndicatorBlobView : UIView
+@end
+
+@interface MTMicrophoneUsageView : UIView
+@end
+
+// UIViewController 계열: self.view 접근을 위해 상속 명시
 @interface SBPrivacyBlobViewController : UIViewController
 - (void)_updateBlobViews;
 - (void)_setVisible:(BOOL)visible animated:(BOOL)animated;
