@@ -1,0 +1,44 @@
+name: Build Theos Deb
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y \
+            build-essential \
+            clang \
+            ldid \
+            git \
+            perl \
+            python3 \
+            fakeroot \
+            dpkg-dev \
+            libplist-utils
+
+      - name: Install Theos
+        run: |
+          git clone --recursive https://github.com/theos/theos.git $HOME/theos
+          echo "THEOS=$HOME/theos" >> $GITHUB_ENV
+
+      - name: Build roothide package
+        run: |
+          make clean
+          make package THEOS_PACKAGE_SCHEME=roothide FINALPACKAGE=1
+
+      - name: Upload deb
+        uses: actions/upload-artifact@v4
+        with:
+          name: VolumeChordRecorder-deb
+          path: packages/*.deb
