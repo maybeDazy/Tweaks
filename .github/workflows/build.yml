@@ -44,7 +44,11 @@ jobs:
 
       - name: Install iPhoneOS SDK
         run: |
-          "$THEOS/bin/install-sdk" latest
+          if [ -d "$THEOS/sdks/iPhoneOS16.5.sdk" ]; then
+            echo "iPhoneOS16.5.sdk already exists, skipping install-sdk"
+          else
+            "$THEOS/bin/install-sdk" latest
+          fi
 
       - name: Build roothide package
         run: |
