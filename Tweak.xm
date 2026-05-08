@@ -3,6 +3,16 @@
 #import <AudioToolbox/AudioToolbox.h>
 #import <notify.h>
 
+// ── 프라이빗 클래스 선언 (컴파일러에게 상속 관계 알림) ──
+@interface SBPrivacyBlobViewController : UIViewController
+- (void)_updateBlobViews;
+@end
+
+@interface MTPrivacyIndicatorViewController : UIViewController
+- (void)_setIndicatorVisible:(BOOL)visible animated:(BOOL)animated;
+@end
+#import <notify.h>
+
 static NSString * const VCRPrefsID = @"com.yourname.volumechordrecorder";
 static NSString * const VCRPrefix = @"[VolumeChordRecorder]";
 
