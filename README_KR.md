@@ -69,3 +69,61 @@ log stream --predicate 'eventMessage contains "VolumeChordRecorder"' --info
 - 녹음 시작: 짧은 진동 1회
 - 녹음 종료: 짧은 진동 2회
 - 설정 앱 > Volume Chord Recorder > Haptic Feedback에서 켜기/끄기 가능
+
+## GitHub Actions에서 Telegram으로 .deb 자동 전송
+
+이 ZIP에는 `.github/workflows/build.yml`이 포함되어 있습니다. 빌드가 성공하면 `packages/*.deb`를 GitHub artifact로 업로드하고, 아래 Secrets가 설정되어 있으면 Telegram으로도 전송합니다.
+
+GitHub 저장소에서 설정:
+
+```text
+Settings → Secrets and variables → Actions → New repository secret
+```
+
+필요한 Secrets:
+
+```text
+TELEGRAM_BOT_TOKEN = BotFather에서 받은 봇 토큰
+TELEGRAM_CHAT_ID   = .deb를 받을 개인/그룹/채널 chat_id
+```
+
+주의: 봇 토큰은 코드에 직접 넣지 마세요. 이미 공개된 토큰은 BotFather에서 revoke 후 새 토큰으로 교체하는 것을 권장합니다.
+
+### CHAT_ID 확인 예시
+
+1. Telegram에서 본인 봇에게 아무 메시지나 보냅니다.
+2. 아래 URL을 브라우저에서 열거나 curl로 호출합니다.
+
+```text
+https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/getUpdates
+```
+
+3. 응답의 `message.chat.id` 값을 `TELEGRAM_CHAT_ID` Secret에 넣습니다.
+
+그룹에 보낼 경우 봇을 그룹에 초대한 뒤 그룹에서 메시지를 하나 보내고 `getUpdates`의 `chat.id`를 확인하세요. 그룹 chat_id는 보통 음수입니다.
+
+
+## 2026-05-08 Fix: UIPressTypeVolumeUp/Down compile error
+
+일부 iPhoneOS SDK 16.x 헤더에는 `UIPressTypeVolumeUp`, `UIPressTypeVolumeDown` 공개 상수가 없어서 컴파일이 실패합니다.
+이번 버전은 `VCR_PRESS_TYPE_VOLUME_UP=102`, `VCR_PRESS_TYPE_VOLUME_DOWN=103` 숫자 fallback을 사용합니다.
+
+빌드 후 실제 기기에서 버튼 감지가 안 되면 로그를 켜고 아래 명령으로 press type 값을 확인하세요.
+
+```bash
+log stream --predicate 'eventMessage contains "VolumeChordRecorder"' --info
+```
+
+로그 예시:
+
+```text
+[VolumeChordRecorder] press began type=102
+[VolumeChordRecorder] press began type=103
+```
+
+만약 다른 숫자가 나오면 `Tweak.xm` 상단의 값을 수정하고 다시 빌드하세요.
+
+```objc
+#define VCR_PRESS_TYPE_VOLUME_UP 102
+#define VCR_PRESS_TYPE_VOLUME_DOWN 103
+```

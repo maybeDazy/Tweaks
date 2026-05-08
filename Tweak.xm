@@ -19,6 +19,25 @@ static NSTimer *maxRecordTimer = nil;
 static AVAudioRecorder *recorder = nil;
 static BOOL isRecording = NO;
 
+// iPhoneOS SDK 16.x public UIKit headers do not expose UIPressTypeVolumeUp/Down.
+// Keep these numeric fallbacks so the tweak compiles. If your device logs different
+// type values, change them here and rebuild.
+#ifndef VCR_PRESS_TYPE_VOLUME_UP
+#define VCR_PRESS_TYPE_VOLUME_UP 102
+#endif
+#ifndef VCR_PRESS_TYPE_VOLUME_DOWN
+#define VCR_PRESS_TYPE_VOLUME_DOWN 103
+#endif
+
+static BOOL VCRPressTypeIsVolumeUp(NSInteger type) {
+    return type == VCR_PRESS_TYPE_VOLUME_UP;
+}
+
+static BOOL VCRPressTypeIsVolumeDown(NSInteger type) {
+    return type == VCR_PRESS_TYPE_VOLUME_DOWN;
+}
+
+
 static void VCRLog(NSString *fmt, ...) {
     va_list args;
     va_start(args, fmt);
@@ -196,8 +215,8 @@ static void VCRCheckChord(void) {
     for (UIPress *press in presses) {
         NSInteger type = press.type;
         if (vcrLogPresses) VCRLog(@"press began type=%ld", (long)type);
-        if (type == UIPressTypeVolumeUp) volumeUpPressed = YES;
-        if (type == UIPressTypeVolumeDown) volumeDownPressed = YES;
+        if (VCRPressTypeIsVolumeUp(type)) volumeUpPressed = YES;
+        if (VCRPressTypeIsVolumeDown(type)) volumeDownPressed = YES;
     }
     VCRCheckChord();
     %orig;
@@ -207,8 +226,8 @@ static void VCRCheckChord(void) {
     for (UIPress *press in presses) {
         NSInteger type = press.type;
         if (vcrLogPresses) VCRLog(@"press ended type=%ld", (long)type);
-        if (type == UIPressTypeVolumeUp) volumeUpPressed = NO;
-        if (type == UIPressTypeVolumeDown) volumeDownPressed = NO;
+        if (VCRPressTypeIsVolumeUp(type)) volumeUpPressed = NO;
+        if (VCRPressTypeIsVolumeDown(type)) volumeDownPressed = NO;
     }
     VCRCheckChord();
     %orig;
@@ -233,5 +252,5 @@ static void VCRCheckChord(void) {
             VCRStopRecording();
         }
     });
-    VCRLog(@"Loaded into %@", [[NSBundle mainBundle] bundleIdentifier]);
+    VCRLog(@"Loaded into %@, volumeUpType=%d volumeDownType=%d", [[NSBundle mainBundle] bundleIdentifier], VCR_PRESS_TYPE_VOLUME_UP, VCR_PRESS_TYPE_VOLUME_DOWN);
 }
