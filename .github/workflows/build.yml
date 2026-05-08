@@ -36,11 +36,11 @@ jobs:
           echo "THEOS=$HOME/theos" >> $GITHUB_ENV
           echo "$HOME/theos/bin" >> $GITHUB_PATH
 
-      - name: Verify roothide scheme
+      - name: Verify RootHide Theos
         run: |
           echo "THEOS=$THEOS"
           find "$THEOS" -iname "*roothide*" -print
-          test -d "$THEOS/makefiles/package/roothide" || test -f "$THEOS/makefiles/package/roothide.mk"
+          test -e "$THEOS/vendor/mod/roothide"
 
       - name: Install iPhoneOS SDK
         run: |
