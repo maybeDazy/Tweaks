@@ -44,7 +44,7 @@ jobs:
 
       - name: Install iPhoneOS SDK
         run: |
-          "$THEOS/bin/install-sdk" 16.5
+          "$THEOS/bin/install-sdk" latest
 
       - name: Build roothide package
         run: |
