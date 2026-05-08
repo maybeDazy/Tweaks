@@ -189,3 +189,37 @@ VolumeChordRecorderPrefs
 - 설정 앱의 `Start/Stop Haptic Feedback` 스위치로 진동을 켜고 끌 수 있습니다.
 
 주의: iOS 마이크/카메라 개인정보 표시 점을 숨기거나 비활성화하는 기능은 포함하지 않았습니다.
+
+## 2026-05-08 추가 수정
+
+이번 버전에는 아래 기능이 추가되었습니다.
+
+1. 녹음 시작/종료 진동 강화
+   - 녹음 시작: 2회 패턴
+   - 녹음 종료: 3회 패턴
+   - 설정 앱의 `Start/Stop Haptic Feedback`으로 전체 ON/OFF 가능
+   - `Test Strong Haptic` 버튼으로 테스트 가능
+
+2. Respring 버튼 안정화
+   - `posix_spawnp("sbreload")`로 PATH 기반 실행 먼저 시도
+   - `/usr/bin/sbreload`, `/var/jb/usr/bin/sbreload`, `/private/preboot/jb/usr/bin/sbreload`, `/private/preboot/procursus/usr/bin/sbreload` 순서로 시도
+   - SpringBoard restart notification fallback 추가
+   - `killall -9 SpringBoard` fallback 추가
+   - 실패 시 시도한 경로와 상태값을 알림창으로 표시
+
+3. 녹음 파일 관리 버튼 추가
+   - `Show Recordings List`: 최근 녹음 파일 목록, 용량, 생성시간 표시
+   - `Delete Latest Recording`: 최신 녹음 파일 1개 삭제
+   - `Delete All Recordings`: `/var/mobile/Media/VolumeChordRecorder` 안의 `.m4a` 파일 전체 삭제
+
+녹음 저장 위치:
+
+```text
+/var/mobile/Media/VolumeChordRecorder/
+```
+
+설정 등록 파일명은 Dopamine2 RootHide + PreferenceLoader에서 표시 확인된 형식인 아래 이름을 사용합니다.
+
+```text
+/Library/PreferenceLoader/Preferences/VolumeChordRecorderPrefs.plist
+```

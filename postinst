@@ -1,0 +1,4 @@
+#!/bin/sh
+# Remove legacy PreferenceLoader registration filename from older test builds.
+rm -f /Library/PreferenceLoader/Preferences/VolumeChordRecorder.plist 2>/dev/null || true
+exit 0
