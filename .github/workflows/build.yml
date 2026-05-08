@@ -65,16 +65,24 @@ jobs:
           path: packages/*.deb
 
       - name: Send deb to Telegram
-        if: ${{ success() && secrets.TELEGRAM_BOT_TOKEN != '' && secrets.TELEGRAM_CHAT_ID != '' }}
+        if: success()
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          set -euo pipefail
-          DEB_FILE="$(ls -1 packages/*.deb | head -n 1)"
-          CAPTION="VolumeChordRecorder roothide deb - ${GITHUB_REPOSITORY}@${GITHUB_SHA::7}"
-          curl -fS \
-            -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument" \
-            -F "chat_id=${TELEGRAM_CHAT_ID}" \
-            -F "caption=${CAPTION}" \
-            -F "document=@${DEB_FILE}"
+          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
+            echo "Telegram secrets are not set. Skipping Telegram upload."
+            exit 0
+          fi
+
+          DEB_FILE="$(ls packages/*.deb | head -n 1)"
+
+          if [ ! -f "$DEB_FILE" ]; then
+            echo "No deb file found."
+            exit 1
+          fi
+
+          curl -sS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument" \
+            -F chat_id="${TELEGRAM_CHAT_ID}" \
+            -F document=@"${DEB_FILE}" \
+            -F caption="VolumeChordRecorder roothide deb build"
