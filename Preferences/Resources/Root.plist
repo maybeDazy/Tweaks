@@ -60,7 +60,7 @@
             <key>cell</key>
             <string>PSSwitchCell</string>
             <key>label</key>
-            <string>Haptic Feedback</string>
+            <string>Start/Stop Haptic Feedback</string>
             <key>key</key>
             <string>haptics</string>
             <key>default</key>

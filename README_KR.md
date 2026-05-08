@@ -141,3 +141,51 @@ log stream --predicate 'eventMessage contains "VolumeChordRecorder"' --info
 ## 2026-05-08 Fix
 - Preferences bundle에 Info.plist가 누락되어 설정 앱에서 보이지 않던 문제를 수정했습니다.
 - `layout/Library/PreferenceBundles/VolumeChordRecorderPrefs.bundle/Info.plist`에도 fallback으로 포함했습니다.
+
+## 2026-05-08 설정 앱 표시 수정
+
+Dopamine2 RootHide + PreferenceLoader 2.2.6 환경에서 설정 항목이 보이지 않던 문제를 반영했습니다.
+
+변경 사항:
+
+```text
+기존 등록 파일: /Library/PreferenceLoader/Preferences/VolumeChordRecorder.plist
+수정 등록 파일: /Library/PreferenceLoader/Preferences/VolumeChordRecorderPrefs.plist
+```
+
+`VolumeChordRecorderPrefs.plist`는 `icon` 항목을 제거하고 `isController`를 추가한 보수적인 PreferenceLoader 형식입니다.
+
+설치 후 기존 등록 파일이 남아 있어도 동작에는 큰 문제 없지만, 중복이나 캐시 문제가 있으면 NewTerm/SSH에서 아래 파일을 삭제해도 됩니다.
+
+```bash
+rm /Library/PreferenceLoader/Preferences/VolumeChordRecorder.plist
+killall Preferences
+sbreload
+```
+
+확인:
+
+```bash
+ls -al /Library/PreferenceLoader/Preferences/VolumeChordRecorderPrefs.plist
+ls -al /Library/PreferenceBundles/VolumeChordRecorderPrefs.bundle/
+```
+
+정상 번들 구성:
+
+```text
+Info.plist
+Root.plist
+VolumeChordRecorderPrefs
+```
+
+
+## 2026-05-08 수정
+
+- Preferences의 Respring 버튼을 Dopamine2 RootHide/rootless 환경에 맞게 보강했습니다.
+  - `/usr/bin/sbreload`, `/var/jb/usr/bin/sbreload`, `/private/preboot/jb/usr/bin/sbreload` 순서로 시도합니다.
+  - 실패하면 `killall -9 SpringBoard` fallback을 시도합니다.
+  - 모두 실패하면 설정 앱에서 실패 알림을 표시합니다.
+- 녹음 시작 시 짧은 진동 1회, 녹음 종료 시 짧은 진동 2회가 동작합니다.
+- 설정 앱의 `Start/Stop Haptic Feedback` 스위치로 진동을 켜고 끌 수 있습니다.
+
+주의: iOS 마이크/카메라 개인정보 표시 점을 숨기거나 비활성화하는 기능은 포함하지 않았습니다.

@@ -1,4 +1,4 @@
-name: Build RootHide Theos Deb
+name: Build RootHide Theos Deb and Send Telegram
 
 on:
   workflow_dispatch:
@@ -33,8 +33,8 @@ jobs:
       - name: Install RootHide Theos
         run: |
           bash -c "$(curl -fsSL https://raw.githubusercontent.com/roothide/theos/master/bin/install-theos)"
-          echo "THEOS=$HOME/theos" >> $GITHUB_ENV
-          echo "$HOME/theos/bin" >> $GITHUB_PATH
+          echo "THEOS=$HOME/theos" >> "$GITHUB_ENV"
+          echo "$HOME/theos/bin" >> "$GITHUB_PATH"
 
       - name: Verify RootHide Theos
         run: |
@@ -56,9 +56,33 @@ jobs:
         run: |
           make clean
           make package THEOS_PACKAGE_SCHEME=roothide FINALPACKAGE=1
+          ls -la packages
 
-      - name: Upload deb
+      - name: Upload deb artifact
         uses: actions/upload-artifact@v4
         with:
           name: VolumeChordRecorder-roothide-deb
           path: packages/*.deb
+
+      - name: Send deb to Telegram
+        if: success()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
+            echo "Telegram secrets are not set. Skipping Telegram upload."
+            exit 0
+          fi
+          DEB_FILE="$(ls -1 packages/*.deb | head -n 1)"
+          if [ ! -f "$DEB_FILE" ]; then
+            echo "No deb file found."
+            exit 1
+          fi
+          CAPTION="VolumeChordRecorder roothide deb - ${GITHUB_REPOSITORY}@${GITHUB_SHA::7}"
+          curl -fS \
+            -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument" \
+            -F "chat_id=${TELEGRAM_CHAT_ID}" \
+            -F "caption=${CAPTION}" \
+            -F "document=@${DEB_FILE}"
