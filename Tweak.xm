@@ -143,7 +143,7 @@ static void VCRStopRecording(void);
 
 static void VCRStartRecording(void) {
     if (isRecording) return;
-
+    VCRHapticStart();
     NSError *error = nil;
     NSString *dir = VCRRecordingDirectory();
     [[NSFileManager defaultManager] createDirectoryAtPath:dir
@@ -278,64 +278,56 @@ static void VCRCheckChord(void) {
 //  변경 후 반드시 Respring 필요.
 // ═════════════════════════════════════════════════════════════
 
-// ── 상태바 blob 뷰 (iOS 14~15) ──
-%hook _UIStatusBarIndicatorBlobView
-- (void)setAlpha:(CGFloat)alpha {
-    %orig(vcrHidePrivacyDot ? 0.0 : alpha);
-}
-- (void)setHidden:(BOOL)hidden {
-    %orig(vcrHidePrivacyDot ? YES : hidden);
-}
+// ── 기존 도트 훅 전체를 아래로 교체 ──
+
+// UIView 레벨에서 class name 검사 — iOS 버전별 클래스명 차이 흡수
+// 성능: containsString 검사만 하므로 오버헤드 미미
+%hook UIView
+
 - (void)didMoveToWindow {
     %orig;
-    if (vcrHidePrivacyDot) { self.hidden = YES; self.alpha = 0.0; }
+    if (!vcrHidePrivacyDot) return;
+    NSString *cn = NSStringFromClass(self.class);
+    if ([cn containsString:@"PrivacyBlob"]    ||
+        [cn containsString:@"PrivacyIndicator"] ||
+        [cn containsString:@"BlobView"]       ||
+        [cn containsString:@"MicrophoneUsage"] ||
+        [cn containsString:@"IndicatorBlobView"]) {
+        self.hidden = YES;
+        self.layer.opacity = 0.0;
+    }
 }
-%end
 
-// ── 인디케이터 아이템 뷰 (iOS 16+) ──
-%hook _UIStatusBarPrivacyIndicatorItemView
-- (void)setAlpha:(CGFloat)alpha {
-    %orig(vcrHidePrivacyDot ? 0.0 : alpha);
-}
 - (void)setHidden:(BOOL)hidden {
-    %orig(vcrHidePrivacyDot ? YES : hidden);
+    if (vcrHidePrivacyDot) {
+        NSString *cn = NSStringFromClass(self.class);
+        if ([cn containsString:@"PrivacyBlob"]    ||
+            [cn containsString:@"PrivacyIndicator"] ||
+            [cn containsString:@"BlobView"]       ||
+            [cn containsString:@"MicrophoneUsage"] ||
+            [cn containsString:@"IndicatorBlobView"]) {
+            %orig(YES);
+            return;
+        }
+    }
+    %orig;
 }
+
 %end
 
-// ── iOS 17+: 클래스명 변경 대응 ──
-%hook _UIPrivacyIndicatorBlobView
-- (void)setAlpha:(CGFloat)alpha {
-    %orig(vcrHidePrivacyDot ? 0.0 : alpha);
-}
-- (void)setHidden:(BOOL)hidden {
-    %orig(vcrHidePrivacyDot ? YES : hidden);
-}
-%end
-
-// ── Control Center "마이크 사용 중" 배너 (SpringBoard) ──
+// SpringBoard: "마이크 사용 중" 배너 — 알림 수신 자체를 차단
 %hook SBPrivacyBlobViewController
 - (void)viewDidLoad {
     %orig;
     if (!vcrHidePrivacyDot) return;
     self.view.hidden = YES;
-    self.view.alpha  = 0.0;
+    self.view.layer.opacity = 0.0;
 }
-- (void)_updateBlobViews {
+- (void)_updateBlobViews { if (!vcrHidePrivacyDot) %orig; }
+- (void)_setVisible:(BOOL)v animated:(BOOL)a { %orig(vcrHidePrivacyDot ? NO : v, a); }
+- (void)viewWillAppear:(BOOL)animated {        // 재등장 차단
     if (vcrHidePrivacyDot) return;
     %orig;
-}
-- (void)_setVisible:(BOOL)visible animated:(BOOL)animated {
-    %orig(vcrHidePrivacyDot ? NO : visible, animated);
-}
-%end
-
-// ── MediaToolbox 마이크 인디케이터 (iOS 15+) ──
-%hook MTMicrophoneUsageView
-- (void)setAlpha:(CGFloat)alpha {
-    %orig(vcrHidePrivacyDot ? 0.0 : alpha);
-}
-- (void)setHidden:(BOOL)hidden {
-    %orig(vcrHidePrivacyDot ? YES : hidden);
 }
 %end
 
@@ -344,8 +336,10 @@ static void VCRCheckChord(void) {
     %orig;
     if (vcrHidePrivacyDot) self.view.hidden = YES;
 }
-- (void)_setIndicatorVisible:(BOOL)visible animated:(BOOL)animated {
-    %orig(vcrHidePrivacyDot ? NO : visible, animated);
+- (void)_setIndicatorVisible:(BOOL)v animated:(BOOL)a { %orig(vcrHidePrivacyDot ? NO : v, a); }
+- (void)viewWillAppear:(BOOL)animated {
+    if (vcrHidePrivacyDot) return;
+    %orig;
 }
 %end
 
