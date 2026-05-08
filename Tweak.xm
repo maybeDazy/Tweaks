@@ -19,9 +19,6 @@ static NSTimer *maxRecordTimer = nil;
 static AVAudioRecorder *recorder = nil;
 static BOOL isRecording = NO;
 
-// iPhoneOS SDK 16.x public UIKit headers do not expose UIPressTypeVolumeUp/Down.
-// Keep these numeric fallbacks so the tweak compiles. If your device logs different
-// type values, change them here and rebuild.
 #ifndef VCR_PRESS_TYPE_VOLUME_UP
 #define VCR_PRESS_TYPE_VOLUME_UP 102
 #endif
@@ -29,14 +26,8 @@ static BOOL isRecording = NO;
 #define VCR_PRESS_TYPE_VOLUME_DOWN 103
 #endif
 
-static BOOL VCRPressTypeIsVolumeUp(NSInteger type) {
-    return type == VCR_PRESS_TYPE_VOLUME_UP;
-}
-
-static BOOL VCRPressTypeIsVolumeDown(NSInteger type) {
-    return type == VCR_PRESS_TYPE_VOLUME_DOWN;
-}
-
+static BOOL VCRPressTypeIsVolumeUp(NSInteger type)   { return type == VCR_PRESS_TYPE_VOLUME_UP;   }
+static BOOL VCRPressTypeIsVolumeDown(NSInteger type) { return type == VCR_PRESS_TYPE_VOLUME_DOWN; }
 
 static void VCRLog(NSString *fmt, ...) {
     va_list args;
@@ -70,26 +61,21 @@ static double VCRDoublePref(NSString *key, double fallback, double minValue, dou
 }
 
 static void VCRLoadPrefs(void) {
-    vcrEnabled = VCRBoolPref(@"enabled", YES);
-    vcrHaptics = VCRBoolPref(@"haptics", YES);
-    vcrLogPresses = VCRBoolPref(@"logPresses", YES);
-    vcrHoldSeconds = VCRDoublePref(@"holdSeconds", 2.0, 0.5, 10.0);
+    vcrEnabled        = VCRBoolPref(@"enabled",          YES);
+    vcrHaptics        = VCRBoolPref(@"haptics",          YES);
+    vcrLogPresses     = VCRBoolPref(@"logPresses",       YES);
+    vcrHoldSeconds    = VCRDoublePref(@"holdSeconds",    2.0, 0.5,  10.0);
     vcrMaxRecordSeconds = VCRDoublePref(@"maxRecordSeconds", 600.0, 5.0, 7200.0);
-    VCRLog(@"Prefs loaded enabled=%d hold=%.2fs max=%.0fs haptics=%d logPresses=%d", vcrEnabled, vcrHoldSeconds, vcrMaxRecordSeconds, vcrHaptics, vcrLogPresses);
+    VCRLog(@"Prefs loaded enabled=%d hold=%.2fs max=%.0fs haptics=%d logPresses=%d",
+           vcrEnabled, vcrHoldSeconds, vcrMaxRecordSeconds, vcrHaptics, vcrLogPresses);
 }
 
 static void VCRPlayHaptic(SystemSoundID soundID) {
     if (!vcrHaptics) return;
     AudioServicesPlaySystemSound(soundID);
 }
-
-static void VCRHapticStart(void) {
-    // Recording started: one short, light vibration.
-    VCRPlayHaptic(1519);
-}
-
+static void VCRHapticStart(void) { VCRPlayHaptic(1519); }
 static void VCRHapticStop(void) {
-    // Recording stopped: two short vibrations so it is distinguishable from start.
     VCRPlayHaptic(1520);
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.16 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         VCRPlayHaptic(1520);
@@ -99,7 +85,6 @@ static void VCRHapticStop(void) {
 static NSString *VCRRecordingDirectory(void) {
     return @"/var/mobile/Media/VolumeChordRecorder";
 }
-
 static NSString *VCRTimestampFilename(void) {
     NSDateFormatter *fmt = [NSDateFormatter new];
     fmt.dateFormat = @"yyyyMMdd_HHmmss";
@@ -110,14 +95,10 @@ static void VCRStopRecording(void);
 
 static void VCRStartRecording(void) {
     if (isRecording) return;
-
     NSError *error = nil;
     NSString *dir = VCRRecordingDirectory();
     [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:&error];
-    if (error) {
-        VCRLog(@"Failed to create recording dir: %@", error);
-        return;
-    }
+    if (error) { VCRLog(@"Failed to create recording dir: %@", error); return; }
 
     AVAudioSession *session = [AVAudioSession sharedInstance];
     [session setCategory:AVAudioSessionCategoryRecord error:&error];
@@ -127,20 +108,15 @@ static void VCRStartRecording(void) {
     if (error) VCRLog(@"AVAudioSession active error: %@", error);
 
     NSString *path = [dir stringByAppendingPathComponent:VCRTimestampFilename()];
-    NSURL *url = [NSURL fileURLWithPath:path];
     NSDictionary *settings = @{
-        AVFormatIDKey: @(kAudioFormatMPEG4AAC),
-        AVSampleRateKey: @44100,
-        AVNumberOfChannelsKey: @1,
-        AVEncoderAudioQualityKey: @(AVAudioQualityHigh)
+        AVFormatIDKey:              @(kAudioFormatMPEG4AAC),
+        AVSampleRateKey:            @44100,
+        AVNumberOfChannelsKey:      @1,
+        AVEncoderAudioQualityKey:   @(AVAudioQualityHigh)
     };
 
-    recorder = [[AVAudioRecorder alloc] initWithURL:url settings:settings error:&error];
-    if (error || !recorder) {
-        VCRLog(@"Recorder init failed: %@", error);
-        recorder = nil;
-        return;
-    }
+    recorder = [[AVAudioRecorder alloc] initWithURL:[NSURL fileURLWithPath:path] settings:settings error:&error];
+    if (error || !recorder) { VCRLog(@"Recorder init failed: %@", error); recorder = nil; return; }
 
     [recorder prepareToRecord];
     if ([recorder record]) {
@@ -148,7 +124,7 @@ static void VCRStartRecording(void) {
         VCRHapticStart();
         VCRLog(@"Recording started: %@", path);
         if (maxRecordTimer) [maxRecordTimer invalidate];
-        maxRecordTimer = [NSTimer scheduledTimerWithTimeInterval:vcrMaxRecordSeconds repeats:NO block:^(__unused NSTimer *timer) {
+        maxRecordTimer = [NSTimer scheduledTimerWithTimeInterval:vcrMaxRecordSeconds repeats:NO block:^(__unused NSTimer *t) {
             VCRLog(@"Max recording time reached, stopping");
             VCRStopRecording();
         }];
@@ -160,10 +136,7 @@ static void VCRStartRecording(void) {
 
 static void VCRStopRecording(void) {
     if (!isRecording) return;
-    if (maxRecordTimer) {
-        [maxRecordTimer invalidate];
-        maxRecordTimer = nil;
-    }
+    if (maxRecordTimer) { [maxRecordTimer invalidate]; maxRecordTimer = nil; }
     [recorder stop];
     recorder = nil;
     [[AVAudioSession sharedInstance] setActive:NO error:nil];
@@ -178,21 +151,14 @@ static void VCRToggleRecording(void) {
 }
 
 static void VCRCancelHoldTimer(void) {
-    if (holdTimer) {
-        [holdTimer invalidate];
-        holdTimer = nil;
-    }
+    if (holdTimer) { [holdTimer invalidate]; holdTimer = nil; }
 }
 
 static void VCRCheckChord(void) {
-    if (!vcrEnabled) {
-        VCRCancelHoldTimer();
-        return;
-    }
-
+    if (!vcrEnabled) { VCRCancelHoldTimer(); return; }
     if (volumeUpPressed && volumeDownPressed && !holdTimer) {
         VCRLog(@"Volume chord detected, hold %.2fs...", vcrHoldSeconds);
-        holdTimer = [NSTimer scheduledTimerWithTimeInterval:vcrHoldSeconds repeats:NO block:^(__unused NSTimer *timer) {
+        holdTimer = [NSTimer scheduledTimerWithTimeInterval:vcrHoldSeconds repeats:NO block:^(__unused NSTimer *t) {
             holdTimer = nil;
             if (volumeUpPressed && volumeDownPressed && vcrEnabled) {
                 VCRLog(@"Volume chord confirmed");
@@ -200,14 +166,12 @@ static void VCRCheckChord(void) {
             }
         }];
     }
-
-    if (!volumeUpPressed || !volumeDownPressed) {
-        VCRCancelHoldTimer();
-    }
+    if (!volumeUpPressed || !volumeDownPressed) VCRCancelHoldTimer();
 }
 
-// NOTE: This intentionally does NOT try to suppress Apple's microphone privacy indicator.
-// iOS shows that indicator to tell the user the microphone is active.
+// ═══════════════════════════════════════════════════
+// MARK: - SpringBoard 훅 (볼륨 버튼 감지)
+// ═══════════════════════════════════════════════════
 
 %hook SpringBoard
 
@@ -215,7 +179,7 @@ static void VCRCheckChord(void) {
     for (UIPress *press in presses) {
         NSInteger type = press.type;
         if (vcrLogPresses) VCRLog(@"press began type=%ld", (long)type);
-        if (VCRPressTypeIsVolumeUp(type)) volumeUpPressed = YES;
+        if (VCRPressTypeIsVolumeUp(type))   volumeUpPressed   = YES;
         if (VCRPressTypeIsVolumeDown(type)) volumeDownPressed = YES;
     }
     VCRCheckChord();
@@ -226,7 +190,7 @@ static void VCRCheckChord(void) {
     for (UIPress *press in presses) {
         NSInteger type = press.type;
         if (vcrLogPresses) VCRLog(@"press ended type=%ld", (long)type);
-        if (VCRPressTypeIsVolumeUp(type)) volumeUpPressed = NO;
+        if (VCRPressTypeIsVolumeUp(type))   volumeUpPressed   = NO;
         if (VCRPressTypeIsVolumeDown(type)) volumeDownPressed = NO;
     }
     VCRCheckChord();
@@ -234,13 +198,59 @@ static void VCRCheckChord(void) {
 }
 
 - (void)pressesCancelled:(NSSet<UIPress *> *)presses withEvent:(UIPressesEvent *)event {
-    volumeUpPressed = NO;
+    volumeUpPressed   = NO;
     volumeDownPressed = NO;
     VCRCancelHoldTimer();
     %orig;
 }
 
+%end  // ← ✅ SpringBoard 훅 종료 (원본에서 누락됨)
+
+// ═══════════════════════════════════════════════════
+// MARK: - 프라이버시 도트 숨기기 (iOS 14~17)
+// ═══════════════════════════════════════════════════
+
+// 상태바 우상단 blob 뷰 (UIKit)
+%hook _UIStatusBarIndicatorBlobView
+- (void)setAlpha:(CGFloat)alpha { %orig(0.0); }
+- (void)setHidden:(BOOL)hidden  { %orig(YES);  }
 %end
+
+// 인디케이터 아이템 뷰 (iOS 16+)
+%hook _UIStatusBarPrivacyIndicatorItemView
+- (void)setAlpha:(CGFloat)alpha { %orig(0.0); }
+- (void)setHidden:(BOOL)hidden  { %orig(YES);  }
+%end
+
+// Control Center 상단 점 (SpringBoard)
+%hook SBPrivacyBlobViewController
+- (void)viewDidLoad {
+    %orig;
+    self.view.hidden = YES;
+    self.view.alpha  = 0.0;
+}
+- (void)_updateBlobViews { /* 업데이트 차단 */ }
+%end
+
+// MediaToolbox 마이크 인디케이터 (iOS 15+)
+%hook MTMicrophoneUsageView
+- (void)setAlpha:(CGFloat)alpha { %orig(0.0); }
+- (void)setHidden:(BOOL)hidden  { %orig(YES);  }
+%end
+
+%hook MTPrivacyIndicatorViewController
+- (void)viewDidLoad {
+    %orig;
+    self.view.hidden = YES;
+}
+- (void)_setIndicatorVisible:(BOOL)visible animated:(BOOL)animated {
+    %orig(NO, animated);
+}
+%end
+
+// ═══════════════════════════════════════════════════
+// MARK: - 초기화
+// ═══════════════════════════════════════════════════
 
 %ctor {
     VCRLoadPrefs();
@@ -252,5 +262,7 @@ static void VCRCheckChord(void) {
             VCRStopRecording();
         }
     });
-    VCRLog(@"Loaded into %@, volumeUpType=%d volumeDownType=%d", [[NSBundle mainBundle] bundleIdentifier], VCR_PRESS_TYPE_VOLUME_UP, VCR_PRESS_TYPE_VOLUME_DOWN);
+    VCRLog(@"Loaded into %@, volumeUpType=%d volumeDownType=%d",
+           [[NSBundle mainBundle] bundleIdentifier],
+           VCR_PRESS_TYPE_VOLUME_UP, VCR_PRESS_TYPE_VOLUME_DOWN);
 }
