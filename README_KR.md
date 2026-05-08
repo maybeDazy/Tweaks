@@ -137,3 +137,7 @@ log stream --predicate 'eventMessage contains "VolumeChordRecorder"' --info
 - Removed manual `autorelease` after `CFBridgingRelease`.
 - Added `@import Darwin.POSIX.spawn;` so `posix_spawn` is visible under the iPhoneOS16.5 SDK module build.
 
+
+## 2026-05-08 Fix
+- Preferences bundle에 Info.plist가 누락되어 설정 앱에서 보이지 않던 문제를 수정했습니다.
+- `layout/Library/PreferenceBundles/VolumeChordRecorderPrefs.bundle/Info.plist`에도 fallback으로 포함했습니다.
