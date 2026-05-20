@@ -238,3 +238,32 @@ VolumeChordRecorderPrefs
 기본값은 기능 OFF입니다. 켠 뒤 `Wallpaper Alpha = 0.0`, `Blur / Material Alpha = 0.08`, `Dim / Scrim Alpha = 0.0` 조합부터 테스트하세요.
 
 주의: 이 기능은 알림센터/커버시트 배경만 조절하며, 마이크/카메라 개인정보 표시 점은 숨기지 않습니다.
+
+
+## Notification Center 투명도가 다 내린 후 풀리는 경우
+
+이 버전은 iOS가 알림센터 전환 완료 시점에 CoverSheet/Notification Center 배경 Material/Blur 레이어를 다시 생성하거나 alpha를 재설정하는 경우를 보강했습니다.
+
+추가된 안정화 로직:
+
+```text
+- CoverSheet/Notification Center subtree를 window class가 아닌 view hierarchy에서도 재검색
+- viewDidAppear/viewDidLayoutSubviews/layoutSubviews 이후 반복 재적용
+- 전환 완료 후 0.05 / 0.15 / 0.35 / 0.70 / 1.10초 지연 재적용
+- UIVisualEffectView / MTMaterialView가 NC context 안에 있을 때 alpha 재강제
+```
+
+권장 테스트값:
+
+```text
+Enable NC Transparency: ON
+Wallpaper Alpha: 0.0
+Blur / Material Alpha: 0.05 ~ 0.12
+Dim / Scrim Alpha: 0.0
+```
+
+그래도 풀리면 `Debug NC View Logs`를 켠 뒤 아래로 로그를 확인하세요.
+
+```bash
+log stream --predicate 'eventMessage contains "VolumeChordRecorder"' --info
+```

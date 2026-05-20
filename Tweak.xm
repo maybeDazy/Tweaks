@@ -21,6 +21,7 @@ static CGFloat vcrNCWallpaperAlpha = 0.00;
 static CGFloat vcrNCBlurAlpha = 0.08;
 static CGFloat vcrNCDimAlpha = 0.00;
 static BOOL vcrNCLogViews = NO;
+static NSTimeInterval vcrLastNCTransparencyBurst = 0.0;
 
 static BOOL volumeUpPressed = NO;
 static BOOL volumeDownPressed = NO;
@@ -312,11 +313,42 @@ static void VCRApplyNCTransparencyRecursive(UIView *view, NSUInteger depth) {
     }
 }
 
+static BOOL VCRClassNameLooksLikeNCContext(NSString *className) {
+    return VCRNameContainsAny(className, @[
+        @"CoverSheet", @"DashBoard", @"NotificationCenter", @"NCNotification",
+        @"NotificationList", @"CombinedList", @"SBCoverSheet", @"SBDashBoard",
+        @"CSCoverSheet", @"CSCombinedList"
+    ]);
+}
+
 static BOOL VCRWindowLooksLikeNotificationCenter(UIWindow *window) {
     NSString *className = NSStringFromClass([window class]);
-    return VCRNameContainsAny(className, @[
-        @"CoverSheet", @"DashBoard", @"NotificationCenter", @"Notification", @"NC"
+    return VCRClassNameLooksLikeNCContext(className) || VCRNameContainsAny(className, @[
+        @"Notification", @"NC"
     ]);
+}
+
+static BOOL VCRViewIsInsideProtectedNCContent(UIView *view) {
+    for (UIView *v = view; v; v = v.superview) {
+        NSString *className = NSStringFromClass([v class]);
+        if (VCRNameContainsAny(className, @[
+            @"Privacy", @"Indicator", @"StatusBar", @"Battery", @"Signal", @"TimeItem",
+            @"MediaControls", @"NowPlaying", @"Platter", @"NotificationCell",
+            @"CollectionViewCell", @"TableCell", @"Button", @"Slider", @"Label", @"Text"
+        ])) {
+            return YES;
+        }
+    }
+    return NO;
+}
+
+static BOOL VCRViewIsInsideNCContext(UIView *view) {
+    if (!view || VCRViewIsInsideProtectedNCContent(view)) return NO;
+    for (UIView *v = view; v; v = v.superview) {
+        if (VCRClassNameLooksLikeNCContext(NSStringFromClass([v class]))) return YES;
+    }
+    UIWindow *window = view.window;
+    return window && VCRWindowLooksLikeNotificationCenter(window);
 }
 
 static void VCRApplyNCTransparencyToContainer(UIView *root) {
@@ -324,6 +356,21 @@ static void VCRApplyNCTransparencyToContainer(UIView *root) {
     root.opaque = NO;
     VCRSetBackgroundAlpha(root, 0.0);
     VCRApplyNCTransparencyRecursive(root, 0);
+}
+
+static void VCRFindAndApplyNCTransparencyInView(UIView *view, NSUInteger depth) {
+    if (!vcrNCTransparencyEnabled || !view || depth > 12) return;
+
+    NSString *className = NSStringFromClass([view class]);
+    if (VCRClassNameLooksLikeNCContext(className)) {
+        if (vcrNCLogViews) VCRLog(@"NC transparency context found %@", className);
+        VCRApplyNCTransparencyToContainer(view);
+        return;
+    }
+
+    for (UIView *subview in view.subviews) {
+        VCRFindAndApplyNCTransparencyInView(subview, depth + 1);
+    }
 }
 
 static void VCRApplyNCTransparencyToAllKnownWindows(void) {
@@ -336,9 +383,53 @@ static void VCRApplyNCTransparencyToAllKnownWindows(void) {
                 window.opaque = NO;
                 VCRSetBackgroundAlpha(window, 0.0);
                 VCRApplyNCTransparencyToContainer(window);
+            } else {
+                // On some Dopamine/RootHide + iOS combinations the fully opened
+                // Notification Center lives inside a generic SpringBoard window.
+                // Scan for the CoverSheet/NotificationCenter subtree instead of
+                // trusting the window class only.
+                VCRFindAndApplyNCTransparencyInView(window, 0);
             }
         }
     });
+}
+
+static void VCRScheduleNCTransparencyPass(NSTimeInterval delay) {
+    if (!vcrNCTransparencyEnabled) return;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        VCRApplyNCTransparencyToAllKnownWindows();
+    });
+}
+
+static void VCRScheduleNCTransparencyBurst(void) {
+    if (!vcrNCTransparencyEnabled) return;
+    NSTimeInterval now = CFAbsoluteTimeGetCurrent();
+    if (now - vcrLastNCTransparencyBurst < 0.20) return;
+    vcrLastNCTransparencyBurst = now;
+    // The interactive pull-down and the fully-presented CoverSheet use different
+    // update passes. Re-apply shortly after completion so SpringBoard's final
+    // material/background reset does not restore opacity.
+    VCRScheduleNCTransparencyPass(0.00);
+    VCRScheduleNCTransparencyPass(0.05);
+    VCRScheduleNCTransparencyPass(0.15);
+    VCRScheduleNCTransparencyPass(0.35);
+    VCRScheduleNCTransparencyPass(0.70);
+    VCRScheduleNCTransparencyPass(1.10);
+}
+
+static void VCRApplyNCTransparencyToContainerAndBurst(UIView *root) {
+    VCRApplyNCTransparencyToContainer(root);
+    VCRScheduleNCTransparencyBurst();
+}
+
+static void VCRApplyNCTransparencyToMaterialView(UIView *view) {
+    if (!vcrNCTransparencyEnabled || !VCRViewIsInsideNCContext(view)) return;
+    NSString *className = NSStringFromClass([view class]);
+    if (VCRShouldSkipNCSubview(view, className)) return;
+    view.opaque = NO;
+    view.alpha = vcrNCBlurAlpha;
+    VCRSetBackgroundAlpha(view, 0.0);
+    if (vcrNCLogViews) VCRLog(@"NC transparency enforced material %@ alpha=%.2f", className, view.alpha);
 }
 
 // NOTE: This intentionally does NOT try to suppress Apple's microphone privacy indicator.
@@ -384,17 +475,22 @@ static void VCRApplyNCTransparencyToAllKnownWindows(void) {
 
 - (void)viewDidLoad {
     %orig;
-    VCRApplyNCTransparencyToContainer(((UIViewController *)self).view);
+    VCRApplyNCTransparencyToContainerAndBurst(((UIViewController *)self).view);
 }
 
 - (void)viewWillAppear:(BOOL)animated {
     %orig;
-    VCRApplyNCTransparencyToContainer(((UIViewController *)self).view);
+    VCRApplyNCTransparencyToContainerAndBurst(((UIViewController *)self).view);
+}
+
+- (void)viewDidAppear:(BOOL)animated {
+    %orig;
+    VCRApplyNCTransparencyToContainerAndBurst(((UIViewController *)self).view);
 }
 
 - (void)viewDidLayoutSubviews {
     %orig;
-    VCRApplyNCTransparencyToContainer(((UIViewController *)self).view);
+    VCRApplyNCTransparencyToContainerAndBurst(((UIViewController *)self).view);
 }
 
 %end
@@ -405,17 +501,22 @@ static void VCRApplyNCTransparencyToAllKnownWindows(void) {
 
 - (void)viewDidLoad {
     %orig;
-    VCRApplyNCTransparencyToContainer(((UIViewController *)self).view);
+    VCRApplyNCTransparencyToContainerAndBurst(((UIViewController *)self).view);
 }
 
 - (void)viewWillAppear:(BOOL)animated {
     %orig;
-    VCRApplyNCTransparencyToContainer(((UIViewController *)self).view);
+    VCRApplyNCTransparencyToContainerAndBurst(((UIViewController *)self).view);
+}
+
+- (void)viewDidAppear:(BOOL)animated {
+    %orig;
+    VCRApplyNCTransparencyToContainerAndBurst(((UIViewController *)self).view);
 }
 
 - (void)viewDidLayoutSubviews {
     %orig;
-    VCRApplyNCTransparencyToContainer(((UIViewController *)self).view);
+    VCRApplyNCTransparencyToContainerAndBurst(((UIViewController *)self).view);
 }
 
 %end
@@ -426,17 +527,22 @@ static void VCRApplyNCTransparencyToAllKnownWindows(void) {
 
 - (void)viewDidLoad {
     %orig;
-    VCRApplyNCTransparencyToContainer(((UIViewController *)self).view);
+    VCRApplyNCTransparencyToContainerAndBurst(((UIViewController *)self).view);
 }
 
 - (void)viewWillAppear:(BOOL)animated {
     %orig;
-    VCRApplyNCTransparencyToContainer(((UIViewController *)self).view);
+    VCRApplyNCTransparencyToContainerAndBurst(((UIViewController *)self).view);
+}
+
+- (void)viewDidAppear:(BOOL)animated {
+    %orig;
+    VCRApplyNCTransparencyToContainerAndBurst(((UIViewController *)self).view);
 }
 
 - (void)viewDidLayoutSubviews {
     %orig;
-    VCRApplyNCTransparencyToContainer(((UIViewController *)self).view);
+    VCRApplyNCTransparencyToContainerAndBurst(((UIViewController *)self).view);
 }
 
 %end
@@ -447,7 +553,7 @@ static void VCRApplyNCTransparencyToAllKnownWindows(void) {
 
 - (void)viewDidLayoutSubviews {
     %orig;
-    VCRApplyNCTransparencyToContainer(((UIViewController *)self).view);
+    VCRApplyNCTransparencyToContainerAndBurst(((UIViewController *)self).view);
 }
 
 %end
@@ -458,7 +564,7 @@ static void VCRApplyNCTransparencyToAllKnownWindows(void) {
 
 - (void)layoutSubviews {
     %orig;
-    VCRApplyNCTransparencyToContainer((UIView *)self);
+    VCRApplyNCTransparencyToContainerAndBurst((UIView *)self);
 }
 
 %end
@@ -469,7 +575,7 @@ static void VCRApplyNCTransparencyToAllKnownWindows(void) {
 
 - (void)layoutSubviews {
     %orig;
-    VCRApplyNCTransparencyToContainer((UIView *)self);
+    VCRApplyNCTransparencyToContainerAndBurst((UIView *)self);
 }
 
 %end
@@ -480,7 +586,7 @@ static void VCRApplyNCTransparencyToAllKnownWindows(void) {
 
 - (void)layoutSubviews {
     %orig;
-    VCRApplyNCTransparencyToContainer((UIView *)self);
+    VCRApplyNCTransparencyToContainerAndBurst((UIView *)self);
 }
 
 %end
@@ -491,7 +597,57 @@ static void VCRApplyNCTransparencyToAllKnownWindows(void) {
 
 - (void)layoutSubviews {
     %orig;
-    VCRApplyNCTransparencyToContainer((UIView *)self);
+    VCRApplyNCTransparencyToContainerAndBurst((UIView *)self);
+}
+
+%end
+%end
+
+%group VCRUIVisualEffectViewHooks
+%hook UIVisualEffectView
+
+- (void)didMoveToWindow {
+    %orig;
+    VCRApplyNCTransparencyToMaterialView((UIView *)self);
+    VCRScheduleNCTransparencyBurst();
+}
+
+- (void)layoutSubviews {
+    %orig;
+    VCRApplyNCTransparencyToMaterialView((UIView *)self);
+}
+
+- (void)setAlpha:(CGFloat)alpha {
+    if (vcrNCTransparencyEnabled && VCRViewIsInsideNCContext((UIView *)self)) {
+        %orig(vcrNCBlurAlpha);
+        return;
+    }
+    %orig(alpha);
+}
+
+%end
+%end
+
+%group VCRMTMaterialViewHooks
+%hook MTMaterialView
+
+- (void)didMoveToWindow {
+    %orig;
+    VCRApplyNCTransparencyToMaterialView((UIView *)self);
+    VCRScheduleNCTransparencyBurst();
+}
+
+- (void)layoutSubviews {
+    %orig;
+    VCRApplyNCTransparencyToMaterialView((UIView *)self);
+}
+
+- (void)setAlpha:(CGFloat)alpha {
+    if (vcrNCTransparencyEnabled && VCRViewIsInsideNCContext((UIView *)self)) {
+        %orig(vcrNCBlurAlpha);
+        return;
+    }
+    %orig(alpha);
 }
 
 %end
@@ -508,6 +664,8 @@ static void VCRApplyNCTransparencyToAllKnownWindows(void) {
     if (objc_getClass("SBDashBoardView")) %init(VCRSBDashBoardViewHooks);
     if (objc_getClass("SBCoverSheetWindow")) %init(VCRSBCoverSheetWindowHooks);
     if (objc_getClass("SBNotificationCenterWindow")) %init(VCRSBNotificationCenterWindowHooks);
+    %init(VCRUIVisualEffectViewHooks);
+    if (objc_getClass("MTMaterialView")) %init(VCRMTMaterialViewHooks);
     int token = 0;
     notify_register_dispatch("com.yourname.volumechordrecorder.prefschanged", &token, dispatch_get_main_queue(), ^(__unused int t) {
         VCRLoadPrefs();
