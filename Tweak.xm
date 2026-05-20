@@ -2,61 +2,51 @@
 #import <AVFoundation/AVFoundation.h>
 #import <AudioToolbox/AudioToolbox.h>
 #import <notify.h>
-
-// ── 프라이빗 클래스 선언 ──────────────────────────────────────
-// UIView 계열: hidden/alpha 접근을 위해 상속 명시
-@interface _UIStatusBarIndicatorBlobView : UIView
-@end
-
-@interface _UIStatusBarPrivacyIndicatorItemView : UIView
-@end
-
-@interface _UIPrivacyIndicatorBlobView : UIView
-@end
-
-@interface MTMicrophoneUsageView : UIView
-@end
-
-// UIViewController 계열: self.view 접근을 위해 상속 명시
-@interface SBPrivacyBlobViewController : UIViewController
-- (void)_updateBlobViews;
-- (void)_setVisible:(BOOL)visible animated:(BOOL)animated;
-@end
-
-@interface MTPrivacyIndicatorViewController : UIViewController
-- (void)_setIndicatorVisible:(BOOL)visible animated:(BOOL)animated;
-@end
-
-// ── 상수 / 전역 변수 ──────────────────────────────────────────
+#import <objc/runtime.h>
 
 static NSString * const VCRPrefsID = @"com.yourname.volumechordrecorder";
-static NSString * const VCRPrefix  = @"[VolumeChordRecorder]";
+static NSString * const VCRPrefix = @"[VolumeChordRecorder]";
 
-static BOOL            vcrEnabled            = YES;
-static BOOL            vcrHaptics            = YES;
-static BOOL            vcrLogPresses         = YES;
-static BOOL            vcrHidePrivacyDot     = NO;
-static NSTimeInterval  vcrHoldSeconds        = 2.0;
-static NSTimeInterval  vcrMaxRecordSeconds   = 600.0;
+static BOOL vcrEnabled = YES;
+static BOOL vcrHaptics = YES;
+static BOOL vcrLogPresses = YES;
+static NSTimeInterval vcrHoldSeconds = 2.0;
+static NSTimeInterval vcrMaxRecordSeconds = 600.0;
 
-static BOOL            volumeUpPressed       = NO;
-static BOOL            volumeDownPressed     = NO;
-static NSTimer        *holdTimer             = nil;
-static NSTimer        *maxRecordTimer        = nil;
-static AVAudioRecorder*recorder              = nil;
-static BOOL            isRecording           = NO;
+// Notification Center / CoverSheet transparency customization.
+// This only changes the Notification Center/CoverSheet background, wallpaper, blur,
+// and dim layers. It intentionally does not hide or alter microphone/camera privacy dots.
+static BOOL vcrNCTransparencyEnabled = NO;
+static CGFloat vcrNCWallpaperAlpha = 0.00;
+static CGFloat vcrNCBlurAlpha = 0.08;
+static CGFloat vcrNCDimAlpha = 0.00;
+static BOOL vcrNCLogViews = NO;
 
+static BOOL volumeUpPressed = NO;
+static BOOL volumeDownPressed = NO;
+static NSTimer *holdTimer = nil;
+static NSTimer *maxRecordTimer = nil;
+static AVAudioRecorder *recorder = nil;
+static BOOL isRecording = NO;
+
+// iPhoneOS SDK 16.x public UIKit headers do not expose UIPressTypeVolumeUp/Down.
+// Keep these numeric fallbacks so the tweak compiles. If your device logs different
+// type values, change them here and rebuild.
 #ifndef VCR_PRESS_TYPE_VOLUME_UP
-#define VCR_PRESS_TYPE_VOLUME_UP   102
+#define VCR_PRESS_TYPE_VOLUME_UP 102
 #endif
 #ifndef VCR_PRESS_TYPE_VOLUME_DOWN
 #define VCR_PRESS_TYPE_VOLUME_DOWN 103
 #endif
 
-static BOOL VCRPressTypeIsVolumeUp(NSInteger t)   { return t == VCR_PRESS_TYPE_VOLUME_UP;   }
-static BOOL VCRPressTypeIsVolumeDown(NSInteger t) { return t == VCR_PRESS_TYPE_VOLUME_DOWN; }
+static BOOL VCRPressTypeIsVolumeUp(NSInteger type) {
+    return type == VCR_PRESS_TYPE_VOLUME_UP;
+}
 
-// ── 유틸 ──────────────────────────────────────────────────────
+static BOOL VCRPressTypeIsVolumeDown(NSInteger type) {
+    return type == VCR_PRESS_TYPE_VOLUME_DOWN;
+}
+
 
 static void VCRLog(NSString *fmt, ...) {
     va_list args;
@@ -68,66 +58,70 @@ static void VCRLog(NSString *fmt, ...) {
 
 static BOOL VCRBoolPref(NSString *key, BOOL fallback) {
     CFPreferencesAppSynchronize((__bridge CFStringRef)VCRPrefsID);
-    CFPropertyListRef v = CFPreferencesCopyAppValue((__bridge CFStringRef)key,
-                                                    (__bridge CFStringRef)VCRPrefsID);
-    if (!v) return fallback;
+    CFPropertyListRef value = CFPreferencesCopyAppValue((__bridge CFStringRef)key, (__bridge CFStringRef)VCRPrefsID);
+    if (!value) return fallback;
     BOOL result = fallback;
-    if (CFGetTypeID(v) == CFBooleanGetTypeID())
-        result = CFBooleanGetValue((CFBooleanRef)v);
-    else if (CFGetTypeID(v) == CFNumberGetTypeID())
-        CFNumberGetValue((CFNumberRef)v, kCFNumberCharType, &result);
-    CFRelease(v);
+    if (CFGetTypeID(value) == CFBooleanGetTypeID()) result = CFBooleanGetValue((CFBooleanRef)value);
+    else if (CFGetTypeID(value) == CFNumberGetTypeID()) CFNumberGetValue((CFNumberRef)value, kCFNumberCharType, &result);
+    CFRelease(value);
     return result;
 }
 
-static double VCRDoublePref(NSString *key, double fallback, double lo, double hi) {
+static double VCRDoublePref(NSString *key, double fallback, double minValue, double maxValue) {
     CFPreferencesAppSynchronize((__bridge CFStringRef)VCRPrefsID);
-    CFPropertyListRef v = CFPreferencesCopyAppValue((__bridge CFStringRef)key,
-                                                    (__bridge CFStringRef)VCRPrefsID);
-    if (!v) return fallback;
+    CFPropertyListRef value = CFPreferencesCopyAppValue((__bridge CFStringRef)key, (__bridge CFStringRef)VCRPrefsID);
+    if (!value) return fallback;
     double result = fallback;
-    if (CFGetTypeID(v) == CFNumberGetTypeID())
-        CFNumberGetValue((CFNumberRef)v, kCFNumberDoubleType, &result);
-    CFRelease(v);
-    if (result < lo) result = lo;
-    if (result > hi) result = hi;
+    if (CFGetTypeID(value) == CFNumberGetTypeID()) CFNumberGetValue((CFNumberRef)value, kCFNumberDoubleType, &result);
+    else if (CFGetTypeID(value) == CFStringGetTypeID()) result = [(__bridge NSString *)value doubleValue];
+    CFRelease(value);
+    if (result < minValue) result = minValue;
+    if (result > maxValue) result = maxValue;
     return result;
 }
 
 static void VCRLoadPrefs(void) {
-    vcrEnabled          = VCRBoolPref(@"enabled",            YES);
-    vcrHaptics          = VCRBoolPref(@"haptics",            YES);
-    vcrLogPresses       = VCRBoolPref(@"logPresses",         YES);
-    vcrHidePrivacyDot   = VCRBoolPref(@"hidePrivacyDot",     NO);
-    vcrHoldSeconds      = VCRDoublePref(@"holdSeconds",      2.0,   0.5,    10.0);
+    vcrEnabled = VCRBoolPref(@"enabled", YES);
+    vcrHaptics = VCRBoolPref(@"haptics", YES);
+    vcrLogPresses = VCRBoolPref(@"logPresses", YES);
+    vcrHoldSeconds = VCRDoublePref(@"holdSeconds", 2.0, 0.5, 10.0);
     vcrMaxRecordSeconds = VCRDoublePref(@"maxRecordSeconds", 600.0, 5.0, 7200.0);
-    VCRLog(@"Prefs loaded enabled=%d hold=%.2fs max=%.0fs haptics=%d logPresses=%d hidePrivacyDot=%d",
-           vcrEnabled, vcrHoldSeconds, vcrMaxRecordSeconds,
-           vcrHaptics, vcrLogPresses, vcrHidePrivacyDot);
+
+    vcrNCTransparencyEnabled = VCRBoolPref(@"ncTransparencyEnabled", NO);
+    vcrNCWallpaperAlpha = (CGFloat)VCRDoublePref(@"ncWallpaperAlpha", 0.00, 0.0, 1.0);
+    vcrNCBlurAlpha = (CGFloat)VCRDoublePref(@"ncBlurAlpha", 0.08, 0.0, 1.0);
+    vcrNCDimAlpha = (CGFloat)VCRDoublePref(@"ncDimAlpha", 0.00, 0.0, 1.0);
+    vcrNCLogViews = VCRBoolPref(@"ncLogViews", NO);
+
+    VCRLog(@"Prefs loaded enabled=%d hold=%.2fs max=%.0fs haptics=%d logPresses=%d ncEnabled=%d wallpaper=%.2f blur=%.2f dim=%.2f",
+           vcrEnabled, vcrHoldSeconds, vcrMaxRecordSeconds, vcrHaptics, vcrLogPresses,
+           vcrNCTransparencyEnabled, vcrNCWallpaperAlpha, vcrNCBlurAlpha, vcrNCDimAlpha);
 }
 
-// ── 햅틱 ──────────────────────────────────────────────────────
-
-static void VCRPlayHaptic(SystemSoundID s) {
+static void VCRPlayHaptic(SystemSoundID soundID) {
     if (!vcrHaptics) return;
-    AudioServicesPlaySystemSound(s);
+    AudioServicesPlaySystemSound(soundID);
 }
 
 static void VCRHapticStart(void) {
+    // Recording started: stronger double pattern.
+    // 1519/1520 are short system haptics on most iPhones.
     VCRPlayHaptic(1519);
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.12 * NSEC_PER_SEC)),
-                   dispatch_get_main_queue(), ^{ VCRPlayHaptic(1520); });
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.12 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        VCRPlayHaptic(1520);
+    });
 }
 
 static void VCRHapticStop(void) {
+    // Recording stopped: stronger triple pattern so it is clearly different from start.
     VCRPlayHaptic(1520);
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.13 * NSEC_PER_SEC)),
-                   dispatch_get_main_queue(), ^{ VCRPlayHaptic(1520); });
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.28 * NSEC_PER_SEC)),
-                   dispatch_get_main_queue(), ^{ VCRPlayHaptic(1519); });
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.13 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        VCRPlayHaptic(1520);
+    });
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.28 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        VCRPlayHaptic(1519);
+    });
 }
-
-// ── 녹음 ──────────────────────────────────────────────────────
 
 static NSString *VCRRecordingDirectory(void) {
     return @"/var/mobile/Media/VolumeChordRecorder";
@@ -143,12 +137,14 @@ static void VCRStopRecording(void);
 
 static void VCRStartRecording(void) {
     if (isRecording) return;
-    VCRHapticStart();
+
     NSError *error = nil;
     NSString *dir = VCRRecordingDirectory();
-    [[NSFileManager defaultManager] createDirectoryAtPath:dir
-                                withIntermediateDirectories:YES attributes:nil error:&error];
-    if (error) { VCRLog(@"Failed to create recording dir: %@", error); return; }
+    [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:&error];
+    if (error) {
+        VCRLog(@"Failed to create recording dir: %@", error);
+        return;
+    }
 
     AVAudioSession *session = [AVAudioSession sharedInstance];
     [session setCategory:AVAudioSessionCategoryRecord error:&error];
@@ -158,15 +154,15 @@ static void VCRStartRecording(void) {
     if (error) VCRLog(@"AVAudioSession active error: %@", error);
 
     NSString *path = [dir stringByAppendingPathComponent:VCRTimestampFilename()];
+    NSURL *url = [NSURL fileURLWithPath:path];
     NSDictionary *settings = @{
-        AVFormatIDKey:            @(kAudioFormatMPEG4AAC),
-        AVSampleRateKey:          @44100,
-        AVNumberOfChannelsKey:    @1,
+        AVFormatIDKey: @(kAudioFormatMPEG4AAC),
+        AVSampleRateKey: @44100,
+        AVNumberOfChannelsKey: @1,
         AVEncoderAudioQualityKey: @(AVAudioQualityHigh)
     };
 
-    recorder = [[AVAudioRecorder alloc] initWithURL:[NSURL fileURLWithPath:path]
-                                           settings:settings error:&error];
+    recorder = [[AVAudioRecorder alloc] initWithURL:url settings:settings error:&error];
     if (error || !recorder) {
         VCRLog(@"Recorder init failed: %@", error);
         recorder = nil;
@@ -179,9 +175,7 @@ static void VCRStartRecording(void) {
         VCRHapticStart();
         VCRLog(@"Recording started: %@", path);
         if (maxRecordTimer) [maxRecordTimer invalidate];
-        maxRecordTimer = [NSTimer scheduledTimerWithTimeInterval:vcrMaxRecordSeconds
-                                                         repeats:NO
-                                                           block:^(__unused NSTimer *t) {
+        maxRecordTimer = [NSTimer scheduledTimerWithTimeInterval:vcrMaxRecordSeconds repeats:NO block:^(__unused NSTimer *timer) {
             VCRLog(@"Max recording time reached, stopping");
             VCRStopRecording();
         }];
@@ -193,7 +187,10 @@ static void VCRStartRecording(void) {
 
 static void VCRStopRecording(void) {
     if (!isRecording) return;
-    if (maxRecordTimer) { [maxRecordTimer invalidate]; maxRecordTimer = nil; }
+    if (maxRecordTimer) {
+        [maxRecordTimer invalidate];
+        maxRecordTimer = nil;
+    }
     [recorder stop];
     recorder = nil;
     [[AVAudioSession sharedInstance] setActive:NO error:nil];
@@ -207,20 +204,22 @@ static void VCRToggleRecording(void) {
     else VCRStartRecording();
 }
 
-// ── 볼륨 코드 감지 ────────────────────────────────────────────
-
 static void VCRCancelHoldTimer(void) {
-    if (holdTimer) { [holdTimer invalidate]; holdTimer = nil; }
+    if (holdTimer) {
+        [holdTimer invalidate];
+        holdTimer = nil;
+    }
 }
 
 static void VCRCheckChord(void) {
-    if (!vcrEnabled) { VCRCancelHoldTimer(); return; }
+    if (!vcrEnabled) {
+        VCRCancelHoldTimer();
+        return;
+    }
 
     if (volumeUpPressed && volumeDownPressed && !holdTimer) {
         VCRLog(@"Volume chord detected, hold %.2fs...", vcrHoldSeconds);
-        holdTimer = [NSTimer scheduledTimerWithTimeInterval:vcrHoldSeconds
-                                                    repeats:NO
-                                                      block:^(__unused NSTimer *t) {
+        holdTimer = [NSTimer scheduledTimerWithTimeInterval:vcrHoldSeconds repeats:NO block:^(__unused NSTimer *timer) {
             holdTimer = nil;
             if (volumeUpPressed && volumeDownPressed && vcrEnabled) {
                 VCRLog(@"Volume chord confirmed");
@@ -229,20 +228,130 @@ static void VCRCheckChord(void) {
         }];
     }
 
-    if (!volumeUpPressed || !volumeDownPressed) VCRCancelHoldTimer();
+    if (!volumeUpPressed || !volumeDownPressed) {
+        VCRCancelHoldTimer();
+    }
 }
 
-// ═════════════════════════════════════════════════════════════
-// MARK: - SpringBoard 훅 (볼륨 버튼 감지)
-// ═════════════════════════════════════════════════════════════
 
+static BOOL VCRNameContains(NSString *name, NSString *needle) {
+    return [name rangeOfString:needle options:NSCaseInsensitiveSearch].location != NSNotFound;
+}
+
+static BOOL VCRNameContainsAny(NSString *name, NSArray<NSString *> *needles) {
+    for (NSString *needle in needles) {
+        if (VCRNameContains(name, needle)) return YES;
+    }
+    return NO;
+}
+
+static void VCRSetBackgroundAlpha(UIView *view, CGFloat alpha) {
+    view.opaque = NO;
+    UIColor *bg = view.backgroundColor;
+    if (bg) {
+        view.backgroundColor = [bg colorWithAlphaComponent:alpha];
+    } else if (alpha <= 0.01) {
+        view.backgroundColor = [UIColor clearColor];
+    }
+}
+
+static BOOL VCRShouldSkipNCSubview(UIView *view, NSString *className) {
+    // Do not touch controls/text/content/status/privacy indicators.
+    if (VCRNameContainsAny(className, @[
+        @"Privacy", @"Indicator", @"StatusBar", @"Battery", @"Signal", @"TimeItem",
+        @"Label", @"Text", @"Button", @"Slider", @"Control", @"Icon", @"Image",
+        @"MediaControls", @"NowPlaying", @"PlatterCell", @"NotificationCell"
+    ])) {
+        return YES;
+    }
+    if ([view isKindOfClass:[UILabel class]] || [view isKindOfClass:[UIButton class]] || [view isKindOfClass:[UIImageView class]]) {
+        return YES;
+    }
+    return NO;
+}
+
+static void VCRApplyNCTransparencyRecursive(UIView *view, NSUInteger depth) {
+    if (!view || depth > 10) return;
+
+    NSString *className = NSStringFromClass([view class]);
+    if (VCRShouldSkipNCSubview(view, className)) return;
+
+    BOOL isWallpaper = VCRNameContainsAny(className, @[
+        @"Wallpaper", @"CSCoverSheetBackground", @"DashBoardBackground", @"CoverSheetBackground"
+    ]);
+    BOOL isDimOrScrim = VCRNameContainsAny(className, @[
+        @"Dimming", @"Dimmer", @"Scrim", @"Tint", @"Overlay"
+    ]);
+    BOOL isBlurOrMaterial = VCRNameContainsAny(className, @[
+        @"Backdrop", @"VisualEffect", @"Material", @"Blur", @"Gaussian"
+    ]);
+    BOOL isGenericBackground = VCRNameContainsAny(className, @[
+        @"BackgroundView", @"BackgroundContainer"
+    ]);
+
+    if (isWallpaper) {
+        view.alpha = vcrNCWallpaperAlpha;
+        VCRSetBackgroundAlpha(view, vcrNCWallpaperAlpha);
+    } else if (isDimOrScrim) {
+        view.alpha = vcrNCDimAlpha;
+        VCRSetBackgroundAlpha(view, vcrNCDimAlpha);
+    } else if (isBlurOrMaterial) {
+        view.alpha = vcrNCBlurAlpha;
+        VCRSetBackgroundAlpha(view, 0.0);
+    } else if (isGenericBackground) {
+        view.alpha = vcrNCWallpaperAlpha;
+        VCRSetBackgroundAlpha(view, 0.0);
+    }
+
+    if (vcrNCLogViews && (isWallpaper || isDimOrScrim || isBlurOrMaterial || isGenericBackground)) {
+        VCRLog(@"NC transparency touched %@ alpha=%.2f", className, view.alpha);
+    }
+
+    for (UIView *subview in view.subviews) {
+        VCRApplyNCTransparencyRecursive(subview, depth + 1);
+    }
+}
+
+static BOOL VCRWindowLooksLikeNotificationCenter(UIWindow *window) {
+    NSString *className = NSStringFromClass([window class]);
+    return VCRNameContainsAny(className, @[
+        @"CoverSheet", @"DashBoard", @"NotificationCenter", @"Notification", @"NC"
+    ]);
+}
+
+static void VCRApplyNCTransparencyToContainer(UIView *root) {
+    if (!vcrNCTransparencyEnabled || !root) return;
+    root.opaque = NO;
+    VCRSetBackgroundAlpha(root, 0.0);
+    VCRApplyNCTransparencyRecursive(root, 0);
+}
+
+static void VCRApplyNCTransparencyToAllKnownWindows(void) {
+    if (!vcrNCTransparencyEnabled) return;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIApplication *app = [UIApplication sharedApplication];
+        for (UIWindow *window in app.windows) {
+            if (VCRWindowLooksLikeNotificationCenter(window)) {
+                if (vcrNCLogViews) VCRLog(@"Applying NC transparency to window %@", NSStringFromClass([window class]));
+                window.opaque = NO;
+                VCRSetBackgroundAlpha(window, 0.0);
+                VCRApplyNCTransparencyToContainer(window);
+            }
+        }
+    });
+}
+
+// NOTE: This intentionally does NOT try to suppress Apple's microphone privacy indicator.
+// iOS shows that indicator to tell the user the microphone is active.
+
+%group VCRSpringBoardHooks
 %hook SpringBoard
 
 - (void)pressesBegan:(NSSet<UIPress *> *)presses withEvent:(UIPressesEvent *)event {
     for (UIPress *press in presses) {
         NSInteger type = press.type;
         if (vcrLogPresses) VCRLog(@"press began type=%ld", (long)type);
-        if (VCRPressTypeIsVolumeUp(type))   volumeUpPressed   = YES;
+        if (VCRPressTypeIsVolumeUp(type)) volumeUpPressed = YES;
         if (VCRPressTypeIsVolumeDown(type)) volumeDownPressed = YES;
     }
     VCRCheckChord();
@@ -253,7 +362,7 @@ static void VCRCheckChord(void) {
     for (UIPress *press in presses) {
         NSInteger type = press.type;
         if (vcrLogPresses) VCRLog(@"press ended type=%ld", (long)type);
-        if (VCRPressTypeIsVolumeUp(type))   volumeUpPressed   = NO;
+        if (VCRPressTypeIsVolumeUp(type)) volumeUpPressed = NO;
         if (VCRPressTypeIsVolumeDown(type)) volumeDownPressed = NO;
     }
     VCRCheckChord();
@@ -261,104 +370,157 @@ static void VCRCheckChord(void) {
 }
 
 - (void)pressesCancelled:(NSSet<UIPress *> *)presses withEvent:(UIPressesEvent *)event {
-    volumeUpPressed   = NO;
+    volumeUpPressed = NO;
     volumeDownPressed = NO;
     VCRCancelHoldTimer();
     %orig;
 }
 
-%end   // SpringBoard
-
-// ═════════════════════════════════════════════════════════════
-// MARK: - 프라이버시 도트 숨기기 (iOS 14~17)
-//
-//  hidePrivacyDot = NO(기본값)  → 아무것도 변경하지 않음
-//  hidePrivacyDot = YES         → 마이크·카메라 표시등 모두 숨김
-//
-//  변경 후 반드시 Respring 필요.
-// ═════════════════════════════════════════════════════════════
-
-// ── 기존 도트 훅 전체를 아래로 교체 ──
-
-// UIView 레벨에서 class name 검사 — iOS 버전별 클래스명 차이 흡수
-// 성능: containsString 검사만 하므로 오버헤드 미미
-%hook UIView
-
-- (void)didMoveToWindow {
-    %orig;
-    if (!vcrHidePrivacyDot) return;
-    NSString *cn = NSStringFromClass(self.class);
-    if ([cn containsString:@"PrivacyBlob"]    ||
-        [cn containsString:@"PrivacyIndicator"] ||
-        [cn containsString:@"BlobView"]       ||
-        [cn containsString:@"MicrophoneUsage"] ||
-        [cn containsString:@"IndicatorBlobView"]) {
-        self.hidden = YES;
-        self.layer.opacity = 0.0;
-    }
-}
-
-- (void)setHidden:(BOOL)hidden {
-    if (vcrHidePrivacyDot) {
-        NSString *cn = NSStringFromClass(self.class);
-        if ([cn containsString:@"PrivacyBlob"]    ||
-            [cn containsString:@"PrivacyIndicator"] ||
-            [cn containsString:@"BlobView"]       ||
-            [cn containsString:@"MicrophoneUsage"] ||
-            [cn containsString:@"IndicatorBlobView"]) {
-            %orig(YES);
-            return;
-        }
-    }
-    %orig;
-}
-
+%end
 %end
 
-// SpringBoard: "마이크 사용 중" 배너 — 알림 수신 자체를 차단
-%hook SBPrivacyBlobViewController
-- (void)viewDidLoad {
-    %orig;
-    if (!vcrHidePrivacyDot) return;
-    self.view.hidden = YES;
-    self.view.layer.opacity = 0.0;
-}
-- (void)_updateBlobViews { if (!vcrHidePrivacyDot) %orig; }
-- (void)_setVisible:(BOOL)v animated:(BOOL)a { %orig(vcrHidePrivacyDot ? NO : v, a); }
-- (void)viewWillAppear:(BOOL)animated {        // 재등장 차단
-    if (vcrHidePrivacyDot) return;
-    %orig;
-}
-%end
+%group VCRCSCoverSheetViewControllerHooks
+%hook CSCoverSheetViewController
 
-%hook MTPrivacyIndicatorViewController
 - (void)viewDidLoad {
     %orig;
-    if (vcrHidePrivacyDot) self.view.hidden = YES;
+    VCRApplyNCTransparencyToContainer(((UIViewController *)self).view);
 }
-- (void)_setIndicatorVisible:(BOOL)v animated:(BOOL)a { %orig(vcrHidePrivacyDot ? NO : v, a); }
+
 - (void)viewWillAppear:(BOOL)animated {
-    if (vcrHidePrivacyDot) return;
     %orig;
+    VCRApplyNCTransparencyToContainer(((UIViewController *)self).view);
 }
+
+- (void)viewDidLayoutSubviews {
+    %orig;
+    VCRApplyNCTransparencyToContainer(((UIViewController *)self).view);
+}
+
+%end
 %end
 
-// ═════════════════════════════════════════════════════════════
-// MARK: - 초기화
-// ═════════════════════════════════════════════════════════════
+%group VCRSBDashBoardViewControllerHooks
+%hook SBDashBoardViewController
+
+- (void)viewDidLoad {
+    %orig;
+    VCRApplyNCTransparencyToContainer(((UIViewController *)self).view);
+}
+
+- (void)viewWillAppear:(BOOL)animated {
+    %orig;
+    VCRApplyNCTransparencyToContainer(((UIViewController *)self).view);
+}
+
+- (void)viewDidLayoutSubviews {
+    %orig;
+    VCRApplyNCTransparencyToContainer(((UIViewController *)self).view);
+}
+
+%end
+%end
+
+%group VCRSBNotificationCenterViewControllerHooks
+%hook SBNotificationCenterViewController
+
+- (void)viewDidLoad {
+    %orig;
+    VCRApplyNCTransparencyToContainer(((UIViewController *)self).view);
+}
+
+- (void)viewWillAppear:(BOOL)animated {
+    %orig;
+    VCRApplyNCTransparencyToContainer(((UIViewController *)self).view);
+}
+
+- (void)viewDidLayoutSubviews {
+    %orig;
+    VCRApplyNCTransparencyToContainer(((UIViewController *)self).view);
+}
+
+%end
+%end
+
+%group VCRNCNotificationListViewControllerHooks
+%hook NCNotificationListViewController
+
+- (void)viewDidLayoutSubviews {
+    %orig;
+    VCRApplyNCTransparencyToContainer(((UIViewController *)self).view);
+}
+
+%end
+%end
+
+%group VCRCSCoverSheetViewHooks
+%hook CSCoverSheetView
+
+- (void)layoutSubviews {
+    %orig;
+    VCRApplyNCTransparencyToContainer((UIView *)self);
+}
+
+%end
+%end
+
+%group VCRSBDashBoardViewHooks
+%hook SBDashBoardView
+
+- (void)layoutSubviews {
+    %orig;
+    VCRApplyNCTransparencyToContainer((UIView *)self);
+}
+
+%end
+%end
+
+%group VCRSBCoverSheetWindowHooks
+%hook SBCoverSheetWindow
+
+- (void)layoutSubviews {
+    %orig;
+    VCRApplyNCTransparencyToContainer((UIView *)self);
+}
+
+%end
+%end
+
+%group VCRSBNotificationCenterWindowHooks
+%hook SBNotificationCenterWindow
+
+- (void)layoutSubviews {
+    %orig;
+    VCRApplyNCTransparencyToContainer((UIView *)self);
+}
+
+%end
+%end
 
 %ctor {
     VCRLoadPrefs();
+    %init(VCRSpringBoardHooks);
+    if (objc_getClass("CSCoverSheetViewController")) %init(VCRCSCoverSheetViewControllerHooks);
+    if (objc_getClass("SBDashBoardViewController")) %init(VCRSBDashBoardViewControllerHooks);
+    if (objc_getClass("SBNotificationCenterViewController")) %init(VCRSBNotificationCenterViewControllerHooks);
+    if (objc_getClass("NCNotificationListViewController")) %init(VCRNCNotificationListViewControllerHooks);
+    if (objc_getClass("CSCoverSheetView")) %init(VCRCSCoverSheetViewHooks);
+    if (objc_getClass("SBDashBoardView")) %init(VCRSBDashBoardViewHooks);
+    if (objc_getClass("SBCoverSheetWindow")) %init(VCRSBCoverSheetWindowHooks);
+    if (objc_getClass("SBNotificationCenterWindow")) %init(VCRSBNotificationCenterWindowHooks);
     int token = 0;
-    notify_register_dispatch("com.yourname.volumechordrecorder.prefschanged",
-                             &token, dispatch_get_main_queue(), ^(__unused int t) {
+    notify_register_dispatch("com.yourname.volumechordrecorder.prefschanged", &token, dispatch_get_main_queue(), ^(__unused int t) {
         VCRLoadPrefs();
         if (!vcrEnabled && isRecording) {
             VCRLog(@"Disabled from Settings while recording, stopping");
             VCRStopRecording();
         }
+        VCRApplyNCTransparencyToAllKnownWindows();
     });
-    VCRLog(@"Loaded into %@, volumeUpType=%d volumeDownType=%d hidePrivacyDot=%d",
-           [[NSBundle mainBundle] bundleIdentifier],
-           VCR_PRESS_TYPE_VOLUME_UP, VCR_PRESS_TYPE_VOLUME_DOWN, vcrHidePrivacyDot);
+    int applyToken = 0;
+    notify_register_dispatch("com.yourname.volumechordrecorder.applyNCTransparency", &applyToken, dispatch_get_main_queue(), ^(__unused int t) {
+        VCRLoadPrefs();
+        VCRApplyNCTransparencyToAllKnownWindows();
+    });
+    VCRLog(@"Loaded into %@, volumeUpType=%d volumeDownType=%d", [[NSBundle mainBundle] bundleIdentifier], VCR_PRESS_TYPE_VOLUME_UP, VCR_PRESS_TYPE_VOLUME_DOWN);
 }

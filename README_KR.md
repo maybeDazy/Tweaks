@@ -223,3 +223,18 @@ VolumeChordRecorderPrefs
 ```text
 /Library/PreferenceLoader/Preferences/VolumeChordRecorderPrefs.plist
 ```
+
+
+## 이번 버전 추가: Notification Center 투명도
+
+설정 앱 → Volume Chord Recorder → Notification Center Transparency 에서 조절할 수 있습니다.
+
+- Enable NC Transparency: 알림센터/커버시트 배경 투명화 켜기
+- Wallpaper Alpha: 커버시트 배경/잠금화면 월페이퍼 계층 투명도. 0.0이면 현재 화면이 더 잘 보이고, 1.0이면 원래대로에 가깝습니다.
+- Blur / Material Alpha: 블러·머티리얼 계층 투명도
+- Dim / Scrim Alpha: 어둡게 덮는 dim/scrim 계층 투명도
+- Apply NC Transparency Now: SpringBoard에 즉시 적용 알림 전송
+
+기본값은 기능 OFF입니다. 켠 뒤 `Wallpaper Alpha = 0.0`, `Blur / Material Alpha = 0.08`, `Dim / Scrim Alpha = 0.0` 조합부터 테스트하세요.
+
+주의: 이 기능은 알림센터/커버시트 배경만 조절하며, 마이크/카메라 개인정보 표시 점은 숨기지 않습니다.

@@ -1,8 +1,8 @@
 Package: com.yourname.volumechordrecorder
 Name: VolumeChordRecorder
-Version: 0.0.4
+Version: 0.0.5
 Architecture: iphoneos-arm
-Description: Volume Up + Down long-press voice recorder tweak with Settings bundle.
+Description: Volume Up + Down voice recorder with Settings, recordings manager, haptics, and NC transparency controls.
 Maintainer: yourname
 Author: yourname
 Section: Tweaks

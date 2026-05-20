@@ -287,4 +287,12 @@ static BOOL VCRFileExists(const char *path) {
     [self presentViewController:alert animated:YES completion:nil];
 }
 
+
+- (void)applyNCTransparencyNow {
+    CFPreferencesAppSynchronize((__bridge CFStringRef)VCRPrefsID);
+    notify_post("com.yourname.volumechordrecorder.applyNCTransparency");
+    notify_post("com.yourname.volumechordrecorder.prefschanged");
+    [self showAlertWithTitle:@"Applied" message:@"Notification Center transparency preferences were sent to SpringBoard. If the current shade does not update immediately, close and reopen Notification Center or respring."];
+}
+
 @end
