@@ -12,7 +12,7 @@
 			<key>label</key>
 			<string>Main</string>
 			<key>footerText</key>
-			<string>Safe build: SpringBoard-only injection. Three-Finger Swipe Down and optional Volume Up + Down toggle recording. Notification Center transparency/live passthrough hooks are removed to avoid SpringBoard boot/respring loops.</string>
+			<string>SpringBoard-only build. Three-Finger Swipe Down and optional Volume Up + Down toggle recording. Notification Center Transparency is available below and defaults OFF for stability.</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -154,6 +154,104 @@
 			<key>PostNotification</key>
 			<string>com.yourname.volumechordrecorder.prefschanged</string>
 		</dict>
+		<dict>
+    <key>cell</key>
+    <string>PSGroupCell</string>
+    <key>label</key>
+    <string>Notification Center Transparency</string>
+    <key>footerText</key>
+    <string>Experimental. Keep Live Passthrough OFF for stability. This only adjusts Notification Center background/blur/dim layers.</string>
+</dict>
+
+<dict>
+    <key>cell</key>
+    <string>PSSwitchCell</string>
+    <key>label</key>
+    <string>Enable NC Transparency</string>
+    <key>key</key>
+    <string>ncTransparencyEnabled</string>
+    <key>default</key>
+    <false/>
+    <key>defaults</key>
+    <string>com.yourname.volumechordrecorder</string>
+    <key>PostNotification</key>
+    <string>com.yourname.volumechordrecorder.prefschanged</string>
+</dict>
+
+<dict>
+    <key>cell</key>
+    <string>PSEditTextCell</string>
+    <key>keyboard</key>
+    <string>decimal</string>
+    <key>label</key>
+    <string>Wallpaper Alpha</string>
+    <key>key</key>
+    <string>ncWallpaperAlpha</string>
+    <key>default</key>
+    <real>0.0</real>
+    <key>defaults</key>
+    <string>com.yourname.volumechordrecorder</string>
+    <key>PostNotification</key>
+    <string>com.yourname.volumechordrecorder.prefschanged</string>
+</dict>
+
+<dict>
+    <key>cell</key>
+    <string>PSEditTextCell</string>
+    <key>keyboard</key>
+    <string>decimal</string>
+    <key>label</key>
+    <string>Blur / Material Alpha</string>
+    <key>key</key>
+    <string>ncBlurAlpha</string>
+    <key>default</key>
+    <real>0.12</real>
+    <key>defaults</key>
+    <string>com.yourname.volumechordrecorder</string>
+    <key>PostNotification</key>
+    <string>com.yourname.volumechordrecorder.prefschanged</string>
+</dict>
+
+<dict>
+    <key>cell</key>
+    <string>PSEditTextCell</string>
+    <key>keyboard</key>
+    <string>decimal</string>
+    <key>label</key>
+    <string>Dim / Scrim Alpha</string>
+    <key>key</key>
+    <string>ncDimAlpha</string>
+    <key>default</key>
+    <real>0.0</real>
+    <key>defaults</key>
+    <string>com.yourname.volumechordrecorder</string>
+    <key>PostNotification</key>
+    <string>com.yourname.volumechordrecorder.prefschanged</string>
+</dict>
+
+<dict>
+    <key>cell</key>
+    <string>PSSwitchCell</string>
+    <key>label</key>
+    <string>Debug NC View Logs</string>
+    <key>key</key>
+    <string>ncLogViews</string>
+    <key>default</key>
+    <false/>
+    <key>defaults</key>
+    <string>com.yourname.volumechordrecorder</string>
+    <key>PostNotification</key>
+    <string>com.yourname.volumechordrecorder.prefschanged</string>
+</dict>
+
+<dict>
+    <key>cell</key>
+    <string>PSButtonCell</string>
+    <key>label</key>
+    <string>Apply NC Transparency Now</string>
+    <key>action</key>
+    <string>applyNCTransparencyNow</string>
+</dict>
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
