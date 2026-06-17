@@ -305,10 +305,12 @@ static void VCRProcessThreeFingerSwipeEvent(UIEvent *event) {
     if (vcrGestureTouchPoints.count == 0) VCRResetThreeFingerGesture();
 }
 
+%group DotRemover
 %hook SBSensorActivityDataProvider
 - (void)_handleNewDomainData:(id)arg1 {
     return;
 }
+%end
 %end
 
 %hook SpringBoard
@@ -356,7 +358,7 @@ static void VCRProcessThreeFingerSwipeEvent(UIEvent *event) {
         VCRLoadPrefs();
 
         if (objc_getClass("SBSensorActivityDataProvider")) {
-            %init(SBSensorActivityDataProvider);
+            %init(DotRemover);
             VCRLog(@"Microphone dot remover initialized");
         }
         
