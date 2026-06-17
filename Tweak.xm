@@ -3,7 +3,7 @@
 #import <AudioToolbox/AudioToolbox.h>
 #import <notify.h>
 #import <math.h>
-
+#import <objc/runtime.h>
 static NSString * const VCRPrefsID = @"com.yourname.volumechordrecorder";
 static NSString * const VCRPrefix = @"[VolumeChordRecorder]";
 
