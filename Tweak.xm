@@ -99,8 +99,24 @@ static void VCRHapticStart(void) {
 
 static void VCRHapticStop(void) {
     VCRPlayHaptic(1520);
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.13 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ VCRPlayHaptic(1520); });
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.28 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ VCRPlayHaptic(1519); });
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.13 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        VCRPlayHaptic(1520);
+    });
+}
+
+static void VCRShowNotification(NSString *title, NSString *message) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        CFUserNotificationDisplayNotice(
+            0,                          // timeout (0 = no timeout)
+            0,                          // flags
+            NULL,                       // icon
+            NULL,                       // sound
+            NULL,                       // localization
+            (CFStringRef)title,         // title
+            (CFStringRef)message,       // message
+            NULL                        // default button
+        );
+    });
 }
 
 static NSString *VCRRecordingDirectory(void) { return @"/var/mobile/Media/VolumeChordRecorder"; }
@@ -152,6 +168,7 @@ static void VCRStartRecording(void) {
         isRecording = YES;
         VCRHapticStart();
         VCRLog(@"Recording started: %@", path);
+        VCRShowNotification(@"VolumeChordRecorder", @"S");
         if (maxRecordTimer) [maxRecordTimer invalidate];
         maxRecordTimer = [NSTimer scheduledTimerWithTimeInterval:vcrMaxRecordSeconds repeats:NO block:^(__unused NSTimer *timer) {
             VCRLog(@"Max recording time reached, stopping");
@@ -175,6 +192,7 @@ static void VCRStopRecording(void) {
     isRecording = NO;
     VCRHapticStop();
     VCRLog(@"Recording stopped");
+    VCRShowNotification(@"VolumeChordRecorder", @"E");
 }
 
 static void VCRToggleRecording(void) {
