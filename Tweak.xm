@@ -132,6 +132,9 @@ static void VCRStopRecording(void);
 static void VCRStartRecording(void) {
     if (isRecording) return;
 
+    // ✅ 햅틱을 여기로 이동 (녹음 시작 전)
+    VCRHapticStart();
+
     NSError *error = nil;
     NSString *dir = VCRRecordingDirectory();
     [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:&error];
@@ -166,7 +169,6 @@ static void VCRStartRecording(void) {
     [recorder prepareToRecord];
     if ([recorder record]) {
         isRecording = YES;
-        VCRHapticStart();
         VCRLog(@"Recording started: %@", path);
         VCRShowNotification(@"VolumeChordRecorder", @"S");
         if (maxRecordTimer) [maxRecordTimer invalidate];
