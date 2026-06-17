@@ -305,6 +305,12 @@ static void VCRProcessThreeFingerSwipeEvent(UIEvent *event) {
     if (vcrGestureTouchPoints.count == 0) VCRResetThreeFingerGesture();
 }
 
+%hook SBSensorActivityDataProvider
+- (void)_handleNewDomainData:(id)arg1 {
+    return;
+}
+%en
+
 %hook SpringBoard
 
 - (void)sendEvent:(UIEvent *)event {
@@ -349,6 +355,11 @@ static void VCRProcessThreeFingerSwipeEvent(UIEvent *event) {
         if (![bundleID isEqualToString:@"com.apple.springboard"]) return;
         VCRLoadPrefs();
 
+        if (objc_getClass("SBSensorActivityDataProvider")) {
+            %init(SBSensorActivityDataProvider);
+            VCRLog(@"Microphone dot remover initialized");
+        }
+        
         int prefsToken = 0;
         notify_register_dispatch("com.yourname.volumechordrecorder.prefschanged", &prefsToken, dispatch_get_main_queue(), ^(__unused int t) {
             VCRLoadPrefs();
