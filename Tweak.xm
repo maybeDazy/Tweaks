@@ -309,7 +309,7 @@ static void VCRProcessThreeFingerSwipeEvent(UIEvent *event) {
 - (void)_handleNewDomainData:(id)arg1 {
     return;
 }
-%en
+%end
 
 %hook SpringBoard
 
