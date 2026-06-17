@@ -1,8 +1,8 @@
 Package: com.yourname.volumechordrecorder
 Name: VolumeChordRecorder
-Version: 0.0.5
+Version: 0.0.10
 Architecture: iphoneos-arm
-Description: Volume Up + Down voice recorder with Settings, recordings manager, haptics, and NC transparency controls.
+Description: Safe SpringBoard-only voice recorder with three-finger swipe, settings, recordings manager, haptics, and no NC transparency hooks.
 Maintainer: yourname
 Author: yourname
 Section: Tweaks

@@ -288,6 +288,84 @@ static BOOL VCRFileExists(const char *path) {
 }
 
 
+
+
+- (void)setLivePassthroughNCTransparency {
+    CFPreferencesSetAppValue(CFSTR("ncTransparencyEnabled"), kCFBooleanTrue, (__bridge CFStringRef)VCRPrefsID);
+    CFPreferencesSetAppValue(CFSTR("ncLivePassthrough"), kCFBooleanTrue, (__bridge CFStringRef)VCRPrefsID);
+    CFPreferencesSetAppValue(CFSTR("ncHideLockscreenWallpaper"), kCFBooleanTrue, (__bridge CFStringRef)VCRPrefsID);
+    CFPreferencesSetAppValue(CFSTR("ncHideLockWallpaper"), kCFBooleanTrue, (__bridge CFStringRef)VCRPrefsID);
+    CFPreferencesSetAppValue(CFSTR("ncUseSnapshotUnderlay"), kCFBooleanFalse, (__bridge CFStringRef)VCRPrefsID);
+    CFPreferencesSetAppValue(CFSTR("ncProtectNotificationCards"), kCFBooleanTrue, (__bridge CFStringRef)VCRPrefsID);
+
+    NSNumber *wallpaper = @0.0;
+    NSNumber *blur = @0.04;
+    NSNumber *dim = @0.0;
+    CFPreferencesSetAppValue(CFSTR("ncWallpaperAlpha"), (__bridge CFPropertyListRef)wallpaper, (__bridge CFStringRef)VCRPrefsID);
+    CFPreferencesSetAppValue(CFSTR("ncBlurAlpha"), (__bridge CFPropertyListRef)blur, (__bridge CFStringRef)VCRPrefsID);
+    CFPreferencesSetAppValue(CFSTR("ncDimAlpha"), (__bridge CFPropertyListRef)dim, (__bridge CFStringRef)VCRPrefsID);
+    CFPreferencesAppSynchronize((__bridge CFStringRef)VCRPrefsID);
+
+    notify_post("com.yourname.volumechordrecorder.prefschanged");
+    notify_post("com.yourname.volumechordrecorder.applyNCTransparency");
+    _specifiers = nil;
+    [self reloadSpecifiers];
+    [self showAlertWithTitle:@"Live NC Passthrough Set"
+                     message:@"Applied: Hide Lock Screen Wallpaper ON, Snapshot Fallback OFF, Wallpaper 0.00, Blur 0.04, Dim 0.00. This tries to keep the actual current SpringBoard/app surface visible. If a video app pauses rendering when fully covered, enable Snapshot Fallback or use a SpringBoard/home-screen video source."];
+}
+
+// Backward compatibility if an old plist still points to the old selector.
+- (void)setCurrentScreenNCTransparency {
+    [self setLivePassthroughNCTransparency];
+}
+
+- (void)setReadableNCTransparency {
+    CFPreferencesSetAppValue(CFSTR("ncTransparencyEnabled"), kCFBooleanTrue, (__bridge CFStringRef)VCRPrefsID);
+    CFPreferencesSetAppValue(CFSTR("ncProtectNotificationCards"), kCFBooleanTrue, (__bridge CFStringRef)VCRPrefsID);
+    CFPreferencesSetAppValue(CFSTR("ncLivePassthrough"), kCFBooleanTrue, (__bridge CFStringRef)VCRPrefsID);
+    CFPreferencesSetAppValue(CFSTR("ncHideLockscreenWallpaper"), kCFBooleanTrue, (__bridge CFStringRef)VCRPrefsID);
+    CFPreferencesSetAppValue(CFSTR("ncHideLockWallpaper"), kCFBooleanTrue, (__bridge CFStringRef)VCRPrefsID);
+    CFPreferencesSetAppValue(CFSTR("ncUseSnapshotUnderlay"), kCFBooleanFalse, (__bridge CFStringRef)VCRPrefsID);
+
+    NSNumber *wallpaper = @0.0;
+    NSNumber *blur = @0.16;
+    NSNumber *dim = @0.18;
+    CFPreferencesSetAppValue(CFSTR("ncWallpaperAlpha"), (__bridge CFPropertyListRef)wallpaper, (__bridge CFStringRef)VCRPrefsID);
+    CFPreferencesSetAppValue(CFSTR("ncBlurAlpha"), (__bridge CFPropertyListRef)blur, (__bridge CFStringRef)VCRPrefsID);
+    CFPreferencesSetAppValue(CFSTR("ncDimAlpha"), (__bridge CFPropertyListRef)dim, (__bridge CFStringRef)VCRPrefsID);
+    CFPreferencesAppSynchronize((__bridge CFStringRef)VCRPrefsID);
+
+    notify_post("com.yourname.volumechordrecorder.prefschanged");
+    notify_post("com.yourname.volumechordrecorder.applyNCTransparency");
+    _specifiers = nil;
+    [self reloadSpecifiers];
+    [self showAlertWithTitle:@"Readable NC Transparency Set"
+                     message:@"Applied: Hide Lock Screen Wallpaper ON, Snapshot Fallback OFF, Wallpaper 0.00, Blur 0.16, Dim 0.18, Protect Notification Cards ON. Close and reopen Notification Center to test."];
+}
+
+
+- (void)vcrSetPrefKey:(NSString *)key value:(id)value {
+    CFPreferencesSetAppValue((__bridge CFStringRef)key, (__bridge CFPropertyListRef)value, (__bridge CFStringRef)VCRPrefsID);
+}
+
+- (void)setLivePassthroughPreset {
+    [self vcrSetPrefKey:@"ncTransparencyEnabled" value:@YES];
+    [self vcrSetPrefKey:@"ncLivePassthrough" value:@YES];
+    [self vcrSetPrefKey:@"ncHideLockscreenWallpaper" value:@YES];
+    [self vcrSetPrefKey:@"ncHideLockWallpaper" value:@YES];
+    [self vcrSetPrefKey:@"ncUseSnapshotUnderlay" value:@NO];
+    [self vcrSetPrefKey:@"ncWallpaperAlpha" value:@0.0];
+    [self vcrSetPrefKey:@"ncBlurAlpha" value:@0.08];
+    [self vcrSetPrefKey:@"ncDimAlpha" value:@0.0];
+    CFPreferencesAppSynchronize((__bridge CFStringRef)VCRPrefsID);
+    notify_post("com.yourname.volumechordrecorder.prefschanged");
+    notify_post("com.yourname.volumechordrecorder.applyNCTransparency");
+    _specifiers = nil;
+    [self reloadSpecifiers];
+    [self showAlertWithTitle:@"Live Passthrough Preset"
+                     message:@"Enabled live current-screen passthrough and disabled snapshot underlay. Close and pull down Notification Center again; respring if the old wallpaper layer is cached."];
+}
+
 - (void)applyNCTransparencyNow {
     CFPreferencesAppSynchronize((__bridge CFStringRef)VCRPrefsID);
     notify_post("com.yourname.volumechordrecorder.applyNCTransparency");
