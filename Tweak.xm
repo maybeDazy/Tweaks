@@ -123,6 +123,48 @@ static void VCRLog(NSString *fmt, ...) {
     VCRAppendLogLine(msg);
 }
 
+// Diagnostic recorder for trigger plumbing. File writes are silently denied by SpringBoard's
+// sandbox, so events go through CFPreferences instead - that always succeeds from SpringBoard
+// and can be read back over SSH or from the Settings pane. Keeps a short rolling history.
+static void VCRDebugEvent(NSString *msg) {
+    static NSDateFormatter *vcrDebugFormatter = nil;
+    static dispatch_once_t vcrDebugOnce;
+    dispatch_once(&vcrDebugOnce, ^{
+        vcrDebugFormatter = [NSDateFormatter new];
+        vcrDebugFormatter.dateFormat = @"HH:mm:ss.SSS";
+    });
+
+    NSString *line = [NSString stringWithFormat:@"%@ %@", [vcrDebugFormatter stringFromDate:[NSDate date]], msg];
+    CFStringRef domain = (__bridge CFStringRef)VCRPrefsID;
+
+    long count = 0;
+    CFPropertyListRef rawCount = CFPreferencesCopyAppValue(CFSTR("debugEventCount"), domain);
+    if (rawCount) {
+        if (CFGetTypeID(rawCount) == CFNumberGetTypeID()) CFNumberGetValue((CFNumberRef)rawCount, kCFNumberLongType, &count);
+        CFRelease(rawCount);
+    }
+    count += 1;
+    CFNumberRef newCount = CFNumberCreate(NULL, kCFNumberLongType, &count);
+    CFPreferencesSetAppValue(CFSTR("debugEventCount"), newCount, domain);
+    CFRelease(newCount);
+    CFPreferencesSetAppValue(CFSTR("debugLastEvent"), (__bridge CFStringRef)line, domain);
+
+    NSString *previous = nil;
+    CFPropertyListRef rawHistory = CFPreferencesCopyAppValue(CFSTR("debugEvents"), domain);
+    if (rawHistory) {
+        if (CFGetTypeID(rawHistory) == CFStringGetTypeID()) previous = [NSString stringWithString:(__bridge NSString *)rawHistory];
+        CFRelease(rawHistory);
+    }
+    NSMutableArray<NSString *> *lines = [NSMutableArray array];
+    for (NSString *existing in [previous componentsSeparatedByString:@"\n"]) {
+        if (existing.length > 0) [lines addObject:existing];
+    }
+    [lines addObject:line];
+    while (lines.count > 8) [lines removeObjectAtIndex:0];
+    CFPreferencesSetAppValue(CFSTR("debugEvents"), (__bridge CFStringRef)[lines componentsJoinedByString:@"\n"], domain);
+    CFPreferencesAppSynchronize(domain);
+}
+
 static BOOL VCRBoolPref(NSString *key, BOOL fallback) {
     CFPreferencesAppSynchronize((__bridge CFStringRef)VCRPrefsID);
     CFPropertyListRef value = CFPreferencesCopyAppValue((__bridge CFStringRef)key, (__bridge CFStringRef)VCRPrefsID);
@@ -1262,6 +1304,7 @@ static void VCRNCApplyToMaterialView(UIView *view) {
     for (UIPress *press in presses) {
         NSInteger type = press.type;
         VCRLog(@"press began type=%ld (state up=%d down=%d)", (long)type, volumeUpPressed, volumeDownPressed);
+        VCRDebugEvent([NSString stringWithFormat:@"press began type=%ld", (long)type]);
         if (VCRPressTypeIsVolumeUp(type)) volumeUpPressed = YES;
         if (VCRPressTypeIsVolumeDown(type)) volumeDownPressed = YES;
     }
@@ -1273,6 +1316,7 @@ static void VCRNCApplyToMaterialView(UIView *view) {
     for (UIPress *press in presses) {
         NSInteger type = press.type;
         VCRLog(@"press ended type=%ld", (long)type);
+        VCRDebugEvent([NSString stringWithFormat:@"press ended type=%ld", (long)type]);
         if (VCRPressTypeIsVolumeUp(type)) volumeUpPressed = NO;
         if (VCRPressTypeIsVolumeDown(type)) volumeDownPressed = NO;
     }
@@ -1282,6 +1326,7 @@ static void VCRNCApplyToMaterialView(UIView *view) {
 
 - (void)pressesCancelled:(NSSet<UIPress *> *)presses withEvent:(UIPressesEvent *)event {
     VCRLog(@"pressesCancelled");
+    VCRDebugEvent(@"pressesCancelled");
     volumeUpPressed = NO;
     volumeDownPressed = NO;
     VCRResetChordState();
@@ -1489,6 +1534,19 @@ static void VCRNCApplyToMaterialView(UIView *view) {
         CFPreferencesAppSynchronize(vcrDomain);
 
         if (![bundleID isEqualToString:@"com.apple.springboard"]) return;
+
+        // Secondary volume signal. Volume button presses also surface as AVSystemController
+        // volume-change notifications, so recording them tells us whether the press hook
+        // actually receives volume presses at all.
+        [[NSNotificationCenter defaultCenter] addObserverForName:@"AVSystemController_SystemVolumeDidChangeNotification"
+                                                          object:nil
+                                                           queue:[NSOperationQueue mainQueue]
+                                                      usingBlock:^(NSNotification *note) {
+            NSString *reason = note.userInfo[@"AVSystemController_AudioVolumeChangeReasonNotificationParameter"];
+            id volume = note.userInfo[@"AVSystemController_AudioVolumeNotificationParameter"];
+            VCRDebugEvent([NSString stringWithFormat:@"volchange reason=%@ volume=%@", reason ?: @"?", volume ?: @"?"]);
+        }];
+
         VCRLoadPrefs();
 
         int prefsToken = 0;

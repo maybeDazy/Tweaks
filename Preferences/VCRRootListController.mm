@@ -205,30 +205,33 @@ static NSString * const VCRRecordingsDir = @"/var/mobile/Media/VolumeChordRecord
     [self presentViewController:confirm animated:YES completion:nil];
 }
 
-// Read back the tweak's file log (it mirrors every VCRLog line to disk).
+// Read back the tweak's trigger diagnostics. They live in CFPreferences rather than a file
+// because SpringBoard's sandbox silently denies file writes from the injected dylib.
 - (void)showDebugLog {
-    NSString *path = @"/var/mobile/Library/Caches/VolumeChordRecorder.log";
-    NSString *content = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil];
-    if (content.length == 0) {
-        [self showAlertWithTitle:@"Debug Log" message:@"No log file yet.\n\nTrigger something (swipe or volume chord), then look again."];
-        return;
-    }
-    NSArray<NSString *> *lines = [content componentsSeparatedByString:@"\n"];
-    NSUInteger limit = 30;
-    NSArray<NSString *> *tail = lines.count > limit ? [lines subarrayWithRange:NSMakeRange(lines.count - limit, limit)] : lines;
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Debug Log (last 30 lines)"
-                                                                  message:[tail componentsJoinedByString:@"\n"]
+    NSString *loadedBundle = [[NSUserDefaults standardUserDefaults] objectForKey:@"debugLastLoadBundle"]
+        ? [[NSUserDefaults standardUserDefaults] objectForKey:@"debugLastLoadBundle"] : @"(never - tweak not injected)";
+    NSString *loadedAt = [[NSUserDefaults standardUserDefaults] objectForKey:@"debugLastLoadTime"] ?: @"?";
+    NSString *events = [[NSUserDefaults standardUserDefaults] objectForKey:@"debugEvents"] ?: @"(no events yet)";
+    NSNumber *count = [[NSUserDefaults standardUserDefaults] objectForKey:@"debugEventCount"] ?: @0;
+
+    NSString *message = [NSString stringWithFormat:@"injected into: %@\nloaded at: %@\nevents seen: %@\n\n%@",
+                         loadedBundle, loadedAt, count, events];
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Trigger Debug Log"
+                                                                  message:message
                                                            preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"Copy All" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) {
-        [UIPasteboard generalPasteboard].string = content;
+        [UIPasteboard generalPasteboard].string = message;
     }]];
     [alert addAction:[UIAlertAction actionWithTitle:@"Close" style:UIAlertActionStyleCancel handler:nil]];
     [self presentViewController:alert animated:YES completion:nil];
 }
 
 - (void)clearDebugLog {
-    [[NSFileManager defaultManager] removeItemAtPath:@"/var/mobile/Library/Caches/VolumeChordRecorder.log" error:nil];
-    [self showAlertWithTitle:@"Debug Log" message:@"Cleared."];
+    for (NSString *key in @[@"debugEvents", @"debugLastEvent", @"debugEventCount"]) {
+        [[NSUserDefaults standardUserDefaults] removeObjectForKey:key];
+    }
+    [[NSUserDefaults standardUserDefaults] synchronize];
+    [self showAlertWithTitle:@"Debug Log" message:@"Cleared. Press the volume buttons, then reopen this."];
 }
 
 - (void)testHaptic {
