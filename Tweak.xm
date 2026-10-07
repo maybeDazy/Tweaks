@@ -1365,6 +1365,11 @@ static void VCRNCApplyToMaterialView(UIView *view) {
             }
             VCRNCApplyToAllKnownWindows();
         });
+// Ungrouped hooks (SpringBoard volume/sendEvent, SBSensorActivityDataProvider) live in
+// Logos' implicit _ungrouped group. Because this file uses %group elsewhere, Logos requires
+// _ungrouped to be initialized explicitly or the whole file fails to build.
+%init(_ungrouped);
+
 if (objc_getClass("CSCoverSheetViewController")) %init(VCRCSCoverSheetViewControllerHooks);
 if (objc_getClass("SBDashBoardViewController")) %init(VCRSBDashBoardViewControllerHooks);
 if (objc_getClass("SBNotificationCenterViewController")) %init(VCRSBNotificationCenterViewControllerHooks);
