@@ -76,7 +76,7 @@ static BOOL VCRPressTypeIsVolumeUp(NSInteger type) { return type == VCR_PRESS_TY
 static BOOL VCRPressTypeIsVolumeDown(NSInteger type) { return type == VCR_PRESS_TYPE_VOLUME_DOWN; }
 
 static NSString *VCRDebugLogPath(void) {
-    return @"/var/mobile/Documents/VolumeChordRecorder.log";
+    return @"/var/mobile/Library/Caches/VolumeChordRecorder.log";
 }
 
 // NSLog only reaches the unified log, which cannot be read on a device without a syslog
@@ -1261,7 +1261,7 @@ static void VCRNCApplyToMaterialView(UIView *view) {
 - (void)pressesBegan:(NSSet<UIPress *> *)presses withEvent:(UIPressesEvent *)event {
     for (UIPress *press in presses) {
         NSInteger type = press.type;
-        if (vcrLogPresses) VCRLog(@"press began type=%ld", (long)type);
+        VCRLog(@"press began type=%ld (state up=%d down=%d)", (long)type, volumeUpPressed, volumeDownPressed);
         if (VCRPressTypeIsVolumeUp(type)) volumeUpPressed = YES;
         if (VCRPressTypeIsVolumeDown(type)) volumeDownPressed = YES;
     }
@@ -1272,7 +1272,7 @@ static void VCRNCApplyToMaterialView(UIView *view) {
 - (void)pressesEnded:(NSSet<UIPress *> *)presses withEvent:(UIPressesEvent *)event {
     for (UIPress *press in presses) {
         NSInteger type = press.type;
-        if (vcrLogPresses) VCRLog(@"press ended type=%ld", (long)type);
+        VCRLog(@"press ended type=%ld", (long)type);
         if (VCRPressTypeIsVolumeUp(type)) volumeUpPressed = NO;
         if (VCRPressTypeIsVolumeDown(type)) volumeDownPressed = NO;
     }
@@ -1281,9 +1281,10 @@ static void VCRNCApplyToMaterialView(UIView *view) {
 }
 
 - (void)pressesCancelled:(NSSet<UIPress *> *)presses withEvent:(UIPressesEvent *)event {
+    VCRLog(@"pressesCancelled");
     volumeUpPressed = NO;
     volumeDownPressed = NO;
-    VCRCancelHoldTimer();
+    VCRResetChordState();
     %orig;
 }
 

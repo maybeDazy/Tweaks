@@ -530,7 +530,7 @@
 			<key>label</key>
 			<string>Debug Log</string>
 			<key>footerText</key>
-			<string>Every trigger is written to /var/mobile/Documents/VolumeChordRecorder.log so you can see whether presses and gestures actually arrive. Show Debug Log displays the last 30 lines. (/var/mobile/Library/Logs is root-owned 744, so the log cannot live there.)</string>
+			<string>Every trigger is written to /var/mobile/Library/Caches/VolumeChordRecorder.log so you can see whether presses and gestures actually arrive. Show Debug Log displays the last 30 lines. (/var/mobile/Library/Logs is root-owned 744, so the log cannot live there.)</string>
 		</dict>
 		<dict>
 			<key>cell</key>
