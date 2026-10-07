@@ -460,7 +460,7 @@ static void VCRCameraStopRunning(void) {
 @end
 
 @implementation VCRMovieRecordingDelegate
-- (void)fileOutput:(AVCaptureFileOutput *)output
+- (void)captureOutput:(AVCaptureFileOutput *)output
 didFinishRecordingToOutputFileAtURL:(NSURL *)outputFileURL
   fromConnections:(NSArray<AVCaptureConnection *> *)connections
             error:(NSError *)error {
