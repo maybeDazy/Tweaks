@@ -1478,6 +1478,16 @@ static void VCRNCApplyToMaterialView(UIView *view) {
 %ctor {
     @autoreleasepool {
         NSString *bundleID = [[NSBundle mainBundle] bundleIdentifier] ?: @"unknown";
+
+        // Load evidence. CFPreferences is sandbox-safe (unlike file writes, which SpringBoard
+        // may deny silently), so this records whether the dylib was actually injected and what
+        // bundle identifier the host process really reports. Written BEFORE the bundle check on
+        // purpose, so a missing stamp means "not injected" rather than "check failed".
+        CFStringRef vcrDomain = CFSTR("com.yourname.volumechordrecorder");
+        CFPreferencesSetAppValue(CFSTR("debugLastLoadBundle"), (__bridge CFStringRef)bundleID, vcrDomain);
+        CFPreferencesSetAppValue(CFSTR("debugLastLoadTime"), (__bridge CFStringRef)[[NSDate date] description], vcrDomain);
+        CFPreferencesAppSynchronize(vcrDomain);
+
         if (![bundleID isEqualToString:@"com.apple.springboard"]) return;
         VCRLoadPrefs();
 
