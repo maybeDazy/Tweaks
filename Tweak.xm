@@ -50,9 +50,12 @@ static NSString *vcrCameraPosition = @"back";        // back | front
 static NSString *vcrCameraLens = @"wide";            // wide (1x) | ultrawide (0.5x), back only
 static NSString *vcrCameraVideoQuality = @"1080p30"; // 720p30 | 1080p30 | 1080p60 | 4k30 | 4k60 | auto
 static NSString *vcrCameraPhotoQuality = @"quality"; // speed | balanced | quality
-// Chord stage: 0 idle, 1 threshold reached (release => photo), 2 waiting for the video window, 3 video fired
-static NSInteger vcrChordStage = 0;
-static NSTimer *chordTimer = nil;
+// Chord tiers by hold time (H = Hold Seconds), decided on RELEASE so a long hold never
+// fires two actions: [H,2H) => photo, [2H,3H) => video toggle, >=3H => audio toggle.
+// While anything is recording the chord always means STOP, at any tier.
+static NSInteger vcrChordStage = 0;   // 0 idle, 1 past H, 2 past 2H, 3 past 3H
+static NSTimer *chordTimer2 = nil;
+static NSTimer *chordTimer3 = nil;
 static AVCaptureSession *vcrCaptureSession = nil;
 static AVCapturePhotoOutput *vcrPhotoOutput = nil;
 static AVCaptureMovieFileOutput *vcrMovieOutput = nil;
@@ -178,6 +181,11 @@ static void VCRHapticStart(void) {
 
 static void VCRHapticStop(void) {
     if (!vcrHapticOnStop) return;
+    VCRPlayHaptic(VCRHapticSoundID());
+}
+
+// Short tick fired as each chord tier unlocks, so you can feel which mode you are about to get.
+static void VCRHapticTick(void) {
     VCRPlayHaptic(VCRHapticSoundID());
 }
 
@@ -607,53 +615,72 @@ static void VCRCancelHoldTimer(void) {
 
 static void VCRResetChordState(void) {
     VCRCancelHoldTimer();
-    if (chordTimer) { [chordTimer invalidate]; chordTimer = nil; }
+    if (chordTimer2) { [chordTimer2 invalidate]; chordTimer2 = nil; }
+    if (chordTimer3) { [chordTimer3 invalidate]; chordTimer3 = nil; }
     vcrChordStage = 0;
 }
 
-// Volume Up + Volume Down chord.
-//   Camera mode: hold past holdSeconds and release => photo; keep holding to 2x => video toggle.
-//   Audio mode : hold past holdSeconds => toggle audio recording (only when the camera chord is off).
+static void VCRStopAnyRecording(void) {
+    if (vcrCameraRecording) VCRStopVideoRecording();
+    if (isRecording) VCRStopRecording();
+}
+
+// Volume Up + Volume Down chord, resolved on release by how long it was held:
+//   tier 0 (under H)     : nothing
+//   tier 1 [H, 2H)       : photo
+//   tier 2 [2H, 3H)      : video start/stop
+//   tier 3 [3H, and up)  : audio start/stop   (only when the audio chord is enabled)
+// If a recording is already running, ANY tier stops it - so stopping never needs a
+// precise hold length and can never turn into an accidental photo.
 static void VCRCheckChord(void) {
     BOOL bothPressed = volumeUpPressed && volumeDownPressed;
+    BOOL cameraChord = vcrEnabled && vcrCameraEnabled && vcrCameraChordTrigger;
+    BOOL audioChord = vcrEnabled && vcrVolumeChordTrigger;
 
     if (!bothPressed) {
         NSInteger stage = vcrChordStage;
         VCRResetChordState();
-        if (stage == 2) {
-            VCRLog(@"Chord released inside the video window -> photo");
-            VCRTakePhoto();
+        if (stage <= 0) return;
+
+        if (vcrCameraRecording || isRecording) {
+            VCRLog(@"Chord tier %ld -> STOP active recording", (long)stage);
+            VCRStopAnyRecording();
+            return;
         }
-        return;
-    }
-
-    BOOL cameraChord = vcrEnabled && vcrCameraEnabled && vcrCameraChordTrigger;
-    BOOL audioChord = vcrEnabled && vcrVolumeChordTrigger;
-
-    if (!cameraChord && !audioChord) { VCRResetChordState(); return; }
-    if (holdTimer || chordTimer) return; // already counting
-
-    vcrChordStage = 1;
-    VCRLog(@"Volume chord detected, hold %.2fs... (%@)", vcrHoldSeconds, cameraChord ? @"camera" : @"audio");
-    holdTimer = [NSTimer scheduledTimerWithTimeInterval:vcrHoldSeconds repeats:NO block:^(__unused NSTimer *timer) {
-        holdTimer = nil;
-        if (!(volumeUpPressed && volumeDownPressed)) return;
-        if (!cameraChord) {
-            VCRLog(@"Volume chord confirmed (audio)");
-            vcrChordStage = 0;
+        if (cameraChord) {
+            if (stage == 1) { VCRLog(@"Chord tier 1 -> photo"); VCRTakePhoto(); return; }
+            if (stage == 2 || !audioChord) { VCRLog(@"Chord tier %ld -> video", (long)stage); VCRToggleVideoRecording(); return; }
+            VCRLog(@"Chord tier 3 -> audio");
             VCRToggleRecording();
             return;
         }
-        // Threshold reached. Do not fire yet: releasing now means photo, holding on means video.
-        vcrChordStage = 2;
-        VCRLog(@"Chord passed photo threshold; hold one more window for video");
-        chordTimer = [NSTimer scheduledTimerWithTimeInterval:vcrHoldSeconds repeats:NO block:^(__unused NSTimer *timer) {
-            chordTimer = nil;
-            if (volumeUpPressed && volumeDownPressed) {
-                VCRLog(@"Chord held to 2x -> video toggle");
+        if (audioChord) { VCRLog(@"Chord (audio only) -> audio toggle"); VCRToggleRecording(); }
+        return;
+    }
+
+    if (!cameraChord && !audioChord) { VCRResetChordState(); return; }
+    if (holdTimer || chordTimer2 || chordTimer3) return; // already counting
+
+    NSTimeInterval tier = MAX(0.4, vcrHoldSeconds);
+    VCRLog(@"Volume chord down; tiers at %.1fs photo / %.1fs video / %.1fs audio (cam=%d aud=%d)",
+           tier, tier * 2.0, tier * 3.0, cameraChord, audioChord);
+
+    holdTimer = [NSTimer scheduledTimerWithTimeInterval:tier repeats:NO block:^(__unused NSTimer *t1) {
+        holdTimer = nil;
+        if (!(volumeUpPressed && volumeDownPressed)) return;
+        vcrChordStage = 1;
+        VCRHapticTick();
+        chordTimer2 = [NSTimer scheduledTimerWithTimeInterval:tier repeats:NO block:^(__unused NSTimer *t2) {
+            chordTimer2 = nil;
+            if (!(volumeUpPressed && volumeDownPressed)) return;
+            vcrChordStage = 2;
+            VCRHapticTick();
+            chordTimer3 = [NSTimer scheduledTimerWithTimeInterval:tier repeats:NO block:^(__unused NSTimer *t3) {
+                chordTimer3 = nil;
+                if (!(volumeUpPressed && volumeDownPressed)) return;
                 vcrChordStage = 3;
-                VCRToggleVideoRecording();
-            }
+                VCRHapticTick();
+            }];
         }];
     }];
 }

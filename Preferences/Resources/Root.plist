@@ -70,7 +70,7 @@
 			<key>cell</key>
 			<string>PSSwitchCell</string>
 			<key>label</key>
-			<string>Volume Up + Down Trigger</string>
+			<string>Volume Up + Down (Audio Recording)</string>
 			<key>key</key>
 			<string>volumeChordTrigger</string>
 			<key>default</key>
@@ -214,7 +214,7 @@
 			<key>label</key>
 			<string>Camera Capture</string>
 			<key>footerText</key>
-			<string>Volume Up + Volume Down chord: hold both past the hold time and release for a photo; keep holding twice as long to start/stop video. Capture is silent (no shutter/record sound) and files save next to the audio recordings. The iOS privacy dot still appears while the camera is in use. Video formats mirror the Camera app; unsupported combinations fall back automatically.</string>
+			<string>Volume Up + Volume Down chord, resolved by how long you hold it (Hold Seconds = one tier): release after 1 tier = photo, after 2 tiers = video start/stop, after 3 tiers = audio start/stop. A haptic tick fires as each tier unlocks, so you can feel which you will get. If a recording is already running the chord always means STOP, at any length. Capture is silent (no shutter/record sound) and files save next to the audio recordings. The iOS privacy dot still appears while the camera is in use. Video formats mirror the Camera app; unsupported combinations fall back automatically.</string>
 		</dict>
 		<dict>
 			<key>cell</key>
