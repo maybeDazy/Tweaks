@@ -130,6 +130,60 @@
 			<key>cell</key>
 			<string>PSSwitchCell</string>
 			<key>label</key>
+			<string>Haptic When Capture Starts</string>
+			<key>key</key>
+			<string>hapticOnStart</string>
+			<key>default</key>
+			<true/>
+			<key>defaults</key>
+			<string>com.yourname.volumechordrecorder</string>
+			<key>PostNotification</key>
+			<string>com.yourname.volumechordrecorder.prefschanged</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>label</key>
+			<string>Haptic When Capture Stops</string>
+			<key>key</key>
+			<string>hapticOnStop</string>
+			<key>default</key>
+			<true/>
+			<key>defaults</key>
+			<string>com.yourname.volumechordrecorder</string>
+			<key>PostNotification</key>
+			<string>com.yourname.volumechordrecorder.prefschanged</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSMultiValueSpecifier</string>
+			<key>label</key>
+			<string>Haptic Strength</string>
+			<key>key</key>
+			<string>hapticStrength</string>
+			<key>defaults</key>
+			<string>com.yourname.volumechordrecorder</string>
+			<key>default</key>
+			<string>medium</string>
+			<key>titles</key>
+			<array>
+				<string>Light</string>
+				<string>Medium</string>
+				<string>Strong</string>
+			</array>
+			<key>values</key>
+			<array>
+				<string>light</string>
+				<string>medium</string>
+				<string>strong</string>
+			</array>
+			<key>PostNotification</key>
+			<string>com.yourname.volumechordrecorder.prefschanged</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>label</key>
 			<string>Debug Gesture Logs</string>
 			<key>key</key>
 			<string>logGestures</string>
@@ -160,17 +214,17 @@
 			<key>label</key>
 			<string>Camera Capture</string>
 			<key>footerText</key>
-			<string>4-finger swipe: down takes a photo, up toggles video recording. Capture is silent by default (no shutter/record sound) and files save to the same folder as audio recordings. Note: the iOS privacy indicator dot still appears while the camera is in use.</string>
+			<string>Volume Up + Volume Down chord: hold both past the hold time and release for a photo; keep holding twice as long to start/stop video. Capture is silent (no shutter/record sound) and files save next to the audio recordings. The iOS privacy dot still appears while the camera is in use. Video formats mirror the Camera app; unsupported combinations fall back automatically.</string>
 		</dict>
 		<dict>
 			<key>cell</key>
 			<string>PSSwitchCell</string>
 			<key>label</key>
-			<string>4-Finger Swipe Down = Photo</string>
+			<string>Camera Capture Enabled</string>
 			<key>key</key>
-			<string>cameraPhotoTrigger</string>
+			<string>cameraEnabled</string>
 			<key>default</key>
-			<false/>
+			<true/>
 			<key>defaults</key>
 			<string>com.yourname.volumechordrecorder</string>
 			<key>PostNotification</key>
@@ -180,9 +234,23 @@
 			<key>cell</key>
 			<string>PSSwitchCell</string>
 			<key>label</key>
-			<string>4-Finger Swipe Up = Video</string>
+			<string>Trigger: Volume Up + Down</string>
 			<key>key</key>
-			<string>cameraVideoTrigger</string>
+			<string>cameraChordTrigger</string>
+			<key>default</key>
+			<true/>
+			<key>defaults</key>
+			<string>com.yourname.volumechordrecorder</string>
+			<key>PostNotification</key>
+			<string>com.yourname.volumechordrecorder.prefschanged</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>label</key>
+			<string>Trigger: 4-Finger Swipe</string>
+			<key>key</key>
+			<string>cameraSwipeTrigger</string>
 			<key>default</key>
 			<false/>
 			<key>defaults</key>
@@ -196,7 +264,7 @@
 			<key>keyboard</key>
 			<string>decimal</string>
 			<key>label</key>
-			<string>Camera Swipe Distance</string>
+			<string>4-Finger Swipe Distance</string>
 			<key>key</key>
 			<string>cameraSwipeDistance</string>
 			<key>default</key>
@@ -210,13 +278,13 @@
 			<key>cell</key>
 			<string>PSMultiValueSpecifier</string>
 			<key>label</key>
-			<string>Front / Back Camera</string>
+			<string>Camera (Front/Back)</string>
 			<key>key</key>
 			<string>cameraPosition</string>
 			<key>defaults</key>
 			<string>com.yourname.volumechordrecorder</string>
 			<key>default</key>
-			<integer>0</integer>
+			<string>back</string>
 			<key>titles</key>
 			<array>
 				<string>Back</string>
@@ -224,8 +292,8 @@
 			</array>
 			<key>values</key>
 			<array>
-				<integer>0</integer>
-				<integer>1</integer>
+				<string>back</string>
+				<string>front</string>
 			</array>
 			<key>PostNotification</key>
 			<string>com.yourname.volumechordrecorder.prefschanged</string>
@@ -240,7 +308,7 @@
 			<key>defaults</key>
 			<string>com.yourname.volumechordrecorder</string>
 			<key>default</key>
-			<integer>1</integer>
+			<string>wide</string>
 			<key>titles</key>
 			<array>
 				<string>1x (Wide)</string>
@@ -248,8 +316,8 @@
 			</array>
 			<key>values</key>
 			<array>
-				<integer>1</integer>
-				<integer>2</integer>
+				<string>wide</string>
+				<string>ultrawide</string>
 			</array>
 			<key>PostNotification</key>
 			<string>com.yourname.volumechordrecorder.prefschanged</string>
@@ -260,52 +328,28 @@
 			<key>label</key>
 			<string>Video Quality</string>
 			<key>key</key>
-			<string>cameraVideoPreset</string>
+			<string>cameraVideoQuality</string>
 			<key>defaults</key>
 			<string>com.yourname.volumechordrecorder</string>
 			<key>default</key>
-			<string>1920x1080</string>
+			<string>1080p30</string>
 			<key>titles</key>
 			<array>
-				<string>720p</string>
-				<string>1080p</string>
-				<string>4K</string>
-				<string>High (auto)</string>
-				<string>Medium</string>
+				<string>720p HD · 30 fps</string>
+				<string>1080p HD · 30 fps</string>
+				<string>1080p HD · 60 fps</string>
+				<string>4K · 30 fps</string>
+				<string>4K · 60 fps</string>
+				<string>High (automatic)</string>
 			</array>
 			<key>values</key>
 			<array>
-				<string>1280x720</string>
-				<string>1920x1080</string>
-				<string>3840x2160</string>
-				<string>high</string>
-				<string>medium</string>
-			</array>
-			<key>PostNotification</key>
-			<string>com.yourname.volumechordrecorder.prefschanged</string>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSMultiValueSpecifier</string>
-			<key>label</key>
-			<string>Frame Rate (video)</string>
-			<key>key</key>
-			<string>cameraFrameRate</string>
-			<key>defaults</key>
-			<string>com.yourname.volumechordrecorder</string>
-			<key>default</key>
-			<integer>30</integer>
-			<key>titles</key>
-			<array>
-				<string>24 fps</string>
-				<string>30 fps</string>
-				<string>60 fps</string>
-			</array>
-			<key>values</key>
-			<array>
-				<integer>24</integer>
-				<integer>30</integer>
-				<integer>60</integer>
+				<string>720p30</string>
+				<string>1080p30</string>
+				<string>1080p60</string>
+				<string>4k30</string>
+				<string>4k60</string>
+				<string>auto</string>
 			</array>
 			<key>PostNotification</key>
 			<string>com.yourname.volumechordrecorder.prefschanged</string>
@@ -323,9 +367,9 @@
 			<string>quality</string>
 			<key>titles</key>
 			<array>
-				<string>Speed</string>
+				<string>Prioritize Speed</string>
 				<string>Balanced</string>
-				<string>Quality</string>
+				<string>Best Quality</string>
 			</array>
 			<key>values</key>
 			<array>
@@ -444,9 +488,17 @@
 			<key>cell</key>
 			<string>PSButtonCell</string>
 			<key>label</key>
-			<string>Show Recording Path</string>
+			<string>Open Recordings in Filza</string>
 			<key>action</key>
 			<string>openRecordingsFolder</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>Show Recording Path</string>
+			<key>action</key>
+			<string>showRecordingPath</string>
 		</dict>
 		<dict>
 			<key>cell</key>

@@ -65,19 +65,38 @@ Start/Stop Haptic Feedback: ON
 - Max Record Seconds: 최대 녹음 시간. 기본 600초
 - Haptic Feedback: 녹음 시작 시 강화 진동, 종료 시 강화 진동
 - Debug Gesture Logs: 세 손가락 제스처 디버그 로그 출력
+- Haptic When Capture Starts / Stops: 캡처 시작·정지 햅틱 개별 on/off. 기본 ON
+- Haptic Strength: Light / Medium / Strong. 기본 Medium
 - Debug Button Logs: 볼륨 버튼 이벤트 로그 출력
 - Show Recording Path: 녹음 저장 위치 표시
 - Respring: SpringBoard 재시작
 
-## 카메라 사진 / 영상 캡처 (4손가락 스와이프)
+## 카메라 사진 / 영상 캡처 (볼륨 상키 + 하키 조합)
 
-설정 앱 → Volume Chord Recorder → Camera Capture 에서 켭니다. 기본값은 OFF입니다.
+설정 앱 → Volume Chord Recorder → Camera Capture 에서 켭니다. 기본값은 ON입니다.
 
 ```text
-4-Finger Swipe Down = Photo   (사진 1장)
-4-Finger Swipe Up   = Video   (영상 녹화 시작/정지 토글)
-Camera Swipe Distance: 140
+볼륨 상 + 볼륨 하 를 Hold Seconds(기본 2초) 이상 누른 뒤 떼면  = Photo (사진 1장)
+그대로 2배(4초)까지 계속 누르고 있으면                        = Video (시작/정지 토글)
 ```
+
+- 짧게 떼면 사진, 계속 누르면 영상입니다. 임계값(1배)에서 바로 찍지 않고 한 윈도우 더 기다렸다가
+  떼는 시점에 사진을 찍으므로, 영상을 원했는데 사진이 같이 찍히지 않습니다.
+- 조합 하나로 둘 다 쓰므로 별도 조합이 필요 없습니다. 4손가락 스와이프(아래=사진, 위=영상)도
+  옵션으로 남아 있고 기본은 OFF입니다.
+- 조합 트리거와 오디오 녹음용 볼륨 조합(`Volume Up + Down Trigger`)이 동시에 켜져 있으면
+  카메라가 우선합니다. 오디오 볼륨 조합은 기본 OFF이므로 평소에는 충돌하지 않습니다.
+- 설정 항목: Camera Capture Enabled / Trigger: Volume Up + Down / Trigger: 4-Finger Swipe /
+  4-Finger Swipe Distance / Camera (Front/Back) / Lens (back camera) 1x·0.5x /
+  Video Quality(카메라 앱처럼 해상도×fps 조합) / Photo Quality.
+
+### 파일 열기 / 햅틱
+
+- **Open Recordings in Filza**: 설정에서 버튼 한 번으로 녹화 폴더를 Filza로 엽니다
+  (`filza://view<경로>` → `filza://localhost<경로>` → `filza://<경로>` 순으로 시도).
+  Filza가 없으면 경로를 보여주고 "Copy Path"를 제공합니다.
+- 햅틱은 시작/정지 각각 켜고 끌 수 있고 세기(Light/Medium/Strong, 시스템 사운드 ID 1519/1520/1521)를
+  고를 수 있습니다.
 
 - 4손가락 스트림은 카메라 제스처가 전담하므로, 3손가락 녹음 토글과 충돌하지 않습니다.
 - 저장 위치는 오디오와 같은 폴더입니다: `/var/mobile/Media/VolumeChordRecorder/` (`.jpg`, `.mp4`).

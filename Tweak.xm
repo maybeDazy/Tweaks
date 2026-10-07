@@ -16,6 +16,9 @@ static BOOL vcrVolumeChordTrigger = NO;
 static BOOL vcrThreeFingerSwipeDownTrigger = YES;
 static CGFloat vcrThreeFingerSwipeDistance = 140.0;
 static BOOL vcrLogGestures = NO;
+static BOOL vcrHapticOnStart = YES;
+static BOOL vcrHapticOnStop = YES;
+static NSInteger vcrHapticStrength = 1;   // 0 light / 1 medium / 2 strong
 
 static BOOL vcrNCTransparencyEnabled = NO;
 static CGFloat vcrNCWallpaperAlpha = 0.00;
@@ -32,18 +35,24 @@ static AVAudioRecorder *recorder = nil;
 static BOOL isRecording = NO;
 
 // --- Camera capture (photo / video) ---
-// Trigger: 4-finger swipe (down = photo, up = video toggle). Runs inside SpringBoard,
-// so camera access depends on SpringBoard's TCC authorization, not the tweak's.
-static BOOL vcrCameraPhotoTrigger = NO;
-static BOOL vcrCameraVideoTrigger = NO;
+// Trigger: Volume Up + Volume Down chord (hold past holdSeconds then release = photo,
+// keep holding to 2x holdSeconds = video start/stop). A 4-finger swipe is kept as an
+// optional alternative. Runs inside SpringBoard, so camera access depends on
+// SpringBoard's TCC authorization, not the tweak's.
+static BOOL vcrCameraEnabled = NO;
+static BOOL vcrCameraChordTrigger = YES;
+static BOOL vcrCameraSwipeTrigger = NO;
 static CGFloat vcrCameraSwipeDistance = 140.0;
 static NSInteger vcrCameraFingerCount = 4;
-// Device/quality selection
-static NSInteger vcrCameraPosition = 0;        // 0 = back, 1 = front
-static NSInteger vcrCameraLens = 1;            // 1 = 1x wide, 2 = 0.5x ultra-wide (back only)
-static NSString *vcrCameraVideoPreset = @"1920x1080";
-static NSInteger vcrCameraFrameRate = 30;      // 24 / 30 / 60
-static NSString *vcrCameraPhotoQuality = @"quality"; // speed / balanced / quality
+// Device/quality selection. String-valued prefs so the Settings lists round-trip cleanly
+// (integer-valued PSMultiValueSpecifier cells did not stick and always showed one title).
+static NSString *vcrCameraPosition = @"back";        // back | front
+static NSString *vcrCameraLens = @"wide";            // wide (1x) | ultrawide (0.5x), back only
+static NSString *vcrCameraVideoQuality = @"1080p30"; // 720p30 | 1080p30 | 1080p60 | 4k30 | 4k60 | auto
+static NSString *vcrCameraPhotoQuality = @"quality"; // speed | balanced | quality
+// Chord stage: 0 idle, 1 threshold reached (release => photo), 2 waiting for the video window, 3 video fired
+static NSInteger vcrChordStage = 0;
+static NSTimer *chordTimer = nil;
 static AVCaptureSession *vcrCaptureSession = nil;
 static AVCapturePhotoOutput *vcrPhotoOutput = nil;
 static AVCaptureMovieFileOutput *vcrMovieOutput = nil;
@@ -125,19 +134,23 @@ static void VCRLoadPrefs(void) {
     vcrThreeFingerSwipeDownTrigger = VCRBoolPref(@"threeFingerSwipeDownTrigger", YES);
     vcrThreeFingerSwipeDistance = (CGFloat)VCRDoublePref(@"threeFingerSwipeDistance", 140.0, 60.0, 500.0);
     vcrLogGestures = VCRBoolPref(@"logGestures", NO);
-    vcrCameraPhotoTrigger = VCRBoolPref(@"cameraPhotoTrigger", NO);
-    vcrCameraVideoTrigger = VCRBoolPref(@"cameraVideoTrigger", NO);
+    vcrCameraEnabled = VCRBoolPref(@"cameraEnabled", YES);
+    vcrCameraChordTrigger = VCRBoolPref(@"cameraChordTrigger", YES);
+    vcrCameraSwipeTrigger = VCRBoolPref(@"cameraSwipeTrigger", NO);
     vcrCameraSwipeDistance = (CGFloat)VCRDoublePref(@"cameraSwipeDistance", 140.0, 60.0, 500.0);
-    vcrCameraPosition = (NSInteger)VCRDoublePref(@"cameraPosition", 0, 0, 1);
-    vcrCameraLens = (NSInteger)VCRDoublePref(@"cameraLens", 1, 1, 2);
-    vcrCameraFrameRate = (NSInteger)VCRDoublePref(@"cameraFrameRate", 30, 1, 240);
-    vcrCameraVideoPreset = VCRStringPref(@"cameraVideoPreset", @"1920x1080");
+    vcrCameraPosition = VCRStringPref(@"cameraPosition", @"back");
+    vcrCameraLens = VCRStringPref(@"cameraLens", @"wide");
+    vcrCameraVideoQuality = VCRStringPref(@"cameraVideoQuality", @"1080p30");
     vcrCameraPhotoQuality = VCRStringPref(@"cameraPhotoQuality", @"quality");
+    vcrHapticOnStart = VCRBoolPref(@"hapticOnStart", YES);
+    vcrHapticOnStop = VCRBoolPref(@"hapticOnStop", YES);
+    NSString *hapticStrength = VCRStringPref(@"hapticStrength", @"medium");
+    vcrHapticStrength = [hapticStrength isEqualToString:@"light"] ? 0 : ([hapticStrength isEqualToString:@"strong"] ? 2 : 1);
 
-    VCRLog(@"Camera prefs photo=%d video=%d swipeDistance=%.0f position=%ld lens=%ld preset=%@ fps=%ld quality=%@",
-           vcrCameraPhotoTrigger, vcrCameraVideoTrigger, vcrCameraSwipeDistance,
-           (long)vcrCameraPosition, (long)vcrCameraLens, vcrCameraVideoPreset,
-           (long)vcrCameraFrameRate, vcrCameraPhotoQuality);
+    VCRLog(@"Camera prefs enabled=%d chord=%d swipe=%d swipeDistance=%.0f position=%@ lens=%@ quality=%@ photoQuality=%@ hapticStart=%d hapticStop=%d hapticStrength=%ld",
+           vcrCameraEnabled, vcrCameraChordTrigger, vcrCameraSwipeTrigger, vcrCameraSwipeDistance,
+           vcrCameraPosition, vcrCameraLens, vcrCameraVideoQuality, vcrCameraPhotoQuality,
+           vcrHapticOnStart, vcrHapticOnStop, (long)vcrHapticStrength);
 
     VCRLog(@"Prefs loaded enabled=%d volumeChord=%d threeSwipe=%d swipeDistance=%.0f hold=%.2fs max=%.0fs haptics=%d logPresses=%d logGestures=%d nc=%d wallpaper=%.2f blur=%.2f dim=%.2f",
            vcrEnabled, vcrVolumeChordTrigger, vcrThreeFingerSwipeDownTrigger, vcrThreeFingerSwipeDistance,
@@ -150,16 +163,22 @@ static void VCRPlayHaptic(SystemSoundID soundID) {
     AudioServicesPlaySystemSound(soundID);
 }
 
+static SystemSoundID VCRHapticSoundID(void) {
+    switch (vcrHapticStrength) {
+        case 0: return 1519;   // light
+        case 2: return 1521;   // strong
+        default: return 1520;  // medium
+    }
+}
+
 static void VCRHapticStart(void) {
-    VCRPlayHaptic(1519);
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.12 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ VCRPlayHaptic(1520); });
+    if (!vcrHapticOnStart) return;
+    VCRPlayHaptic(VCRHapticSoundID());
 }
 
 static void VCRHapticStop(void) {
-    VCRPlayHaptic(1520);
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.13 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        VCRPlayHaptic(1520);
-    });
+    if (!vcrHapticOnStop) return;
+    VCRPlayHaptic(VCRHapticSoundID());
 }
 
 static void VCRShowNotification(NSString *title, NSString *message) {
@@ -302,9 +321,9 @@ static void VCRCameraEnsureSession(void) {
 
 // Pick the capture device for the configured position (front/back) and lens (1x / 0.5x).
 static AVCaptureDevice *VCRCameraSelectDevice(void) {
-    AVCaptureDevicePosition position = (vcrCameraPosition == 1) ? AVCaptureDevicePositionFront : AVCaptureDevicePositionBack;
+    AVCaptureDevicePosition position = [vcrCameraPosition isEqualToString:@"front"] ? AVCaptureDevicePositionFront : AVCaptureDevicePositionBack;
     AVCaptureDeviceType type = AVCaptureDeviceTypeBuiltInWideAngleCamera;
-    if (position == AVCaptureDevicePositionBack && vcrCameraLens == 2) {
+    if (position == AVCaptureDevicePositionBack && [vcrCameraLens isEqualToString:@"ultrawide"]) {
         type = AVCaptureDeviceTypeBuiltInUltraWideCamera; // 0.5x is back-only
     }
     AVCaptureDeviceDiscoverySession *discovery =
@@ -327,20 +346,25 @@ static AVCapturePhotoQualityPrioritization VCRCameraPhotoQualityValue(void) {
     return AVCapturePhotoQualityPrioritizationQuality;
 }
 
+// "Video Quality" pref -> session preset (Camera-app-style resolution).
 static NSString *VCRCameraVideoPresetConstant(void) {
-    NSString *p = vcrCameraVideoPreset;
-    if ([p isEqualToString:@"medium"]) return AVCaptureSessionPresetMedium;
-    if ([p isEqualToString:@"high"]) return AVCaptureSessionPresetHigh;
-    if ([p isEqualToString:@"1280x720"]) return AVCaptureSessionPreset1280x720;
-    if ([p isEqualToString:@"1920x1080"]) return AVCaptureSessionPreset1920x1080;
-    if ([p isEqualToString:@"3840x2160"]) return AVCaptureSessionPreset3840x2160;
-    return AVCaptureSessionPreset1920x1080;
+    NSString *q = vcrCameraVideoQuality;
+    if ([q hasPrefix:@"720p"]) return AVCaptureSessionPreset1280x720;
+    if ([q hasPrefix:@"1080p"]) return AVCaptureSessionPreset1920x1080;
+    if ([q hasPrefix:@"4k"] || [q hasPrefix:@"2160p"]) return AVCaptureSessionPreset3840x2160;
+    return AVCaptureSessionPresetHigh; // auto
+}
+
+// Frame rate from the same pref. 0 means "leave the device default" (auto).
+static int32_t VCRCameraFPSForQuality(void) {
+    if ([vcrCameraVideoQuality hasSuffix:@"60"]) return 60;
+    if ([vcrCameraVideoQuality hasSuffix:@"30"]) return 30;
+    return 0;
 }
 
 // Try to force the requested frame rate on the device by selecting a format that
 // supports it, then pinning min/max frame duration.
-static void VCRCameraApplyFrameRate(AVCaptureDevice *device) {
-    int32_t fps = (int32_t)vcrCameraFrameRate;
+static void VCRCameraApplyFrameRate(AVCaptureDevice *device, int32_t fps) {
     if (!device || fps <= 0) return;
 
     NSError *error = nil;
@@ -409,14 +433,14 @@ static BOOL VCRCameraPrepareSession(BOOL forVideo) {
         if (vcrMovieOutput && [vcrCaptureSession canAddOutput:vcrMovieOutput]) [vcrCaptureSession addOutput:vcrMovieOutput];
         else VCRLog(@"Camera: cannot add movie output");
         [vcrCaptureSession commitConfiguration];
-        VCRLog(@"Camera: video session device=%@ preset=%@ lens=%ld pos=%ld", device.localizedName, preset, (long)vcrCameraLens, (long)vcrCameraPosition);
-        VCRCameraApplyFrameRate(device);
+        VCRLog(@"Camera: video session device=%@ preset=%@ lens=%@ pos=%@ quality=%@ fps=%d", device.localizedName, preset, vcrCameraLens, vcrCameraPosition, vcrCameraVideoQuality, (int)VCRCameraFPSForQuality());
+        VCRCameraApplyFrameRate(device, VCRCameraFPSForQuality());
     } else {
         if ([vcrCaptureSession canSetSessionPreset:AVCaptureSessionPresetPhoto]) vcrCaptureSession.sessionPreset = AVCaptureSessionPresetPhoto;
         if (vcrPhotoOutput && [vcrCaptureSession canAddOutput:vcrPhotoOutput]) [vcrCaptureSession addOutput:vcrPhotoOutput];
         else VCRLog(@"Camera: cannot add photo output");
         [vcrCaptureSession commitConfiguration];
-        VCRLog(@"Camera: photo session device=%@ lens=%ld pos=%ld", device.localizedName, (long)vcrCameraLens, (long)vcrCameraPosition);
+        VCRLog(@"Camera: photo session device=%@ lens=%@ pos=%@", device.localizedName, vcrCameraLens, vcrCameraPosition);
     }
     return YES;
 }
@@ -491,7 +515,7 @@ didFinishRecordingToOutputFileAtURL:(NSURL *)outputFileURL
 @end
 
 static void VCRTakePhoto(void) {
-    if (!vcrEnabled || !vcrCameraPhotoTrigger) return;
+    if (!vcrEnabled || !vcrCameraEnabled) return;
     if (vcrCameraRecording) { VCRLog(@"Camera busy: video recording in progress"); return; }
 
     VCRCameraCheckAuthorization();
@@ -517,7 +541,7 @@ static void VCRTakePhoto(void) {
 }
 
 static void VCRStartVideoRecording(void) {
-    if (!vcrEnabled || !vcrCameraVideoTrigger) return;
+    if (!vcrEnabled || !vcrCameraEnabled) return;
     if (vcrCameraRecording) return;
 
     VCRCameraCheckAuthorization();
@@ -569,6 +593,11 @@ static void VCRStopVideoRecording(void) {
     // The recording delegate finishes the state transition and stops the session.
 }
 
+static void VCRToggleVideoRecording(void) {
+    if (vcrCameraRecording) VCRStopVideoRecording();
+    else VCRStartVideoRecording();
+}
+
 static void VCRCancelHoldTimer(void) {
     if (holdTimer) {
         [holdTimer invalidate];
@@ -576,24 +605,57 @@ static void VCRCancelHoldTimer(void) {
     }
 }
 
+static void VCRResetChordState(void) {
+    VCRCancelHoldTimer();
+    if (chordTimer) { [chordTimer invalidate]; chordTimer = nil; }
+    vcrChordStage = 0;
+}
+
+// Volume Up + Volume Down chord.
+//   Camera mode: hold past holdSeconds and release => photo; keep holding to 2x => video toggle.
+//   Audio mode : hold past holdSeconds => toggle audio recording (only when the camera chord is off).
 static void VCRCheckChord(void) {
-    if (!vcrEnabled || !vcrVolumeChordTrigger) {
-        VCRCancelHoldTimer();
+    BOOL bothPressed = volumeUpPressed && volumeDownPressed;
+
+    if (!bothPressed) {
+        NSInteger stage = vcrChordStage;
+        VCRResetChordState();
+        if (stage == 2) {
+            VCRLog(@"Chord released inside the video window -> photo");
+            VCRTakePhoto();
+        }
         return;
     }
 
-    if (volumeUpPressed && volumeDownPressed && !holdTimer) {
-        VCRLog(@"Volume chord detected, hold %.2fs...", vcrHoldSeconds);
-        holdTimer = [NSTimer scheduledTimerWithTimeInterval:vcrHoldSeconds repeats:NO block:^(__unused NSTimer *timer) {
-            holdTimer = nil;
-            if (volumeUpPressed && volumeDownPressed && vcrEnabled && vcrVolumeChordTrigger) {
-                VCRLog(@"Volume chord confirmed");
-                VCRToggleRecording();
+    BOOL cameraChord = vcrEnabled && vcrCameraEnabled && vcrCameraChordTrigger;
+    BOOL audioChord = vcrEnabled && vcrVolumeChordTrigger;
+
+    if (!cameraChord && !audioChord) { VCRResetChordState(); return; }
+    if (holdTimer || chordTimer) return; // already counting
+
+    vcrChordStage = 1;
+    VCRLog(@"Volume chord detected, hold %.2fs... (%@)", vcrHoldSeconds, cameraChord ? @"camera" : @"audio");
+    holdTimer = [NSTimer scheduledTimerWithTimeInterval:vcrHoldSeconds repeats:NO block:^(__unused NSTimer *timer) {
+        holdTimer = nil;
+        if (!(volumeUpPressed && volumeDownPressed)) return;
+        if (!cameraChord) {
+            VCRLog(@"Volume chord confirmed (audio)");
+            vcrChordStage = 0;
+            VCRToggleRecording();
+            return;
+        }
+        // Threshold reached. Do not fire yet: releasing now means photo, holding on means video.
+        vcrChordStage = 2;
+        VCRLog(@"Chord passed photo threshold; hold one more window for video");
+        chordTimer = [NSTimer scheduledTimerWithTimeInterval:vcrHoldSeconds repeats:NO block:^(__unused NSTimer *timer) {
+            chordTimer = nil;
+            if (volumeUpPressed && volumeDownPressed) {
+                VCRLog(@"Chord held to 2x -> video toggle");
+                vcrChordStage = 3;
+                VCRToggleVideoRecording();
             }
         }];
-    }
-
-    if (!volumeUpPressed || !volumeDownPressed) VCRCancelHoldTimer();
+    }];
 }
 
 static NSMutableDictionary<NSValue *, NSValue *> *vcrGestureTouchPoints = nil;
@@ -614,7 +676,7 @@ static NSTimeInterval vcrCameraStartTime = 0.0;
 static NSTimeInterval vcrLastCameraTriggerTime = 0.0;
 
 static BOOL VCRCameraGestureMayOwnTouches(NSUInteger count) {
-    return (vcrCameraPhotoTrigger || vcrCameraVideoTrigger) && count >= (NSUInteger)vcrCameraFingerCount;
+    return (vcrCameraEnabled && vcrCameraSwipeTrigger) && count >= (NSUInteger)vcrCameraFingerCount;
 }
 
 static CGPoint VCRCentroidForCameraTouches(void) {
@@ -733,7 +795,7 @@ static void VCRProcessThreeFingerSwipeEvent(UIEvent *event) {
 
 static void VCRProcessCameraGestureEvent(UIEvent *event) {
     if (!vcrEnabled) return;
-    if (!vcrCameraPhotoTrigger && !vcrCameraVideoTrigger) return;
+    if (!vcrCameraEnabled || !vcrCameraSwipeTrigger) return;
     if (!event || event.type != UIEventTypeTouches) return;
 
     NSSet<UITouch *> *touches = [event allTouches];
@@ -779,8 +841,7 @@ static void VCRProcessCameraGestureEvent(UIEvent *event) {
                     VCRTakePhoto();
                 } else {
                     VCRLog(@"Camera gesture swipe up -> video toggle");
-                    if (vcrCameraRecording) VCRStopVideoRecording();
-                    else VCRStartVideoRecording();
+                    VCRToggleVideoRecording();
                 }
             }
         } else if (elapsed > 2.0) {

@@ -12,6 +12,10 @@ static NSString * const VCRRecordingsDir = @"/var/mobile/Media/VolumeChordRecord
 @interface VCRRootListController : PSListController
 @end
 
+@interface VCRRootListController (Private)
+- (void)vcrTryOpenURLs:(NSArray<NSString *> *)urls atIndex:(NSUInteger)index path:(NSString *)path;
+@end
+
 @implementation VCRRootListController
 
 - (NSArray *)specifiers {
@@ -51,10 +55,11 @@ static NSString * const VCRRecordingsDir = @"/var/mobile/Media/VolumeChordRecord
                                                             includingPropertiesForKeys:@[NSURLCreationDateKey, NSURLFileSizeKey]
                                                                                options:NSDirectoryEnumerationSkipsHiddenFiles
                                                                                  error:nil];
-    NSPredicate *m4aOnly = [NSPredicate predicateWithBlock:^BOOL(NSURL *url, __unused NSDictionary *bindings) {
-        return [[url.pathExtension lowercaseString] isEqualToString:@"m4a"];
+    NSSet<NSString *> *mediaExtensions = [NSSet setWithArray:@[@"m4a", @"mp4", @"mov", @"jpg", @"jpeg", @"png"]];
+    NSPredicate *mediaOnly = [NSPredicate predicateWithBlock:^BOOL(NSURL *url, __unused NSDictionary *bindings) {
+        return [mediaExtensions containsObject:[url.pathExtension lowercaseString]];
     }];
-    NSArray<NSURL *> *filtered = [files filteredArrayUsingPredicate:m4aOnly];
+    NSArray<NSURL *> *filtered = [files filteredArrayUsingPredicate:mediaOnly];
     return [filtered sortedArrayUsingComparator:^NSComparisonResult(NSURL *a, NSURL *b) {
         NSDate *dateA = nil;
         NSDate *dateB = nil;
@@ -79,7 +84,7 @@ static NSString * const VCRRecordingsDir = @"/var/mobile/Media/VolumeChordRecord
 - (NSString *)recordingsSummaryWithLimit:(NSUInteger)limit {
     NSArray<NSURL *> *files = [self recordingFileURLs];
     if (files.count == 0) {
-        return [NSString stringWithFormat:@"No .m4a recordings found.\n\nPath:\n%@", VCRRecordingsDir];
+        return [NSString stringWithFormat:@"No recordings or photos found.\n\nPath:\n%@", VCRRecordingsDir];
     }
 
     NSMutableString *summary = [NSMutableString stringWithFormat:@"Path:\n%@\n\nTotal: %lu file(s)\n\n", VCRRecordingsDir, (unsigned long)files.count];
@@ -103,7 +108,38 @@ static NSString * const VCRRecordingsDir = @"/var/mobile/Media/VolumeChordRecord
     return summary;
 }
 
+// Open the recordings folder in Filza. Filza's URL scheme is not consistently documented,
+// so try the known forms in order and fall back to showing / copying the path.
 - (void)openRecordingsFolder {
+    NSString *path = VCRRecordingsDir;
+    NSArray<NSString *> *candidates = @[
+        [@"filza://view" stringByAppendingString:path],
+        [NSString stringWithFormat:@"filza://localhost%@", path],
+        [NSString stringWithFormat:@"filza://%@", path],
+    ];
+    [self vcrTryOpenURLs:candidates atIndex:0 path:path];
+}
+
+- (void)vcrTryOpenURLs:(NSArray<NSString *> *)urls atIndex:(NSUInteger)index path:(NSString *)path {
+    if (index >= urls.count) {
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Could not open Filza"
+                                                                       message:[NSString stringWithFormat:@"Tried filza:// but nothing handled it.\n\nPath:\n%@", path]
+                                                                preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"Copy Path" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) {
+            [UIPasteboard generalPasteboard].string = path;
+        }]];
+        [alert addAction:[UIAlertAction actionWithTitle:@"Close" style:UIAlertActionStyleCancel handler:nil]];
+        [self presentViewController:alert animated:YES completion:nil];
+        return;
+    }
+    NSURL *url = [NSURL URLWithString:urls[index]];
+    if (!url) { [self vcrTryOpenURLs:urls atIndex:index + 1 path:path]; return; }
+    [[UIApplication sharedApplication] openURL:url options:@{} completionHandler:^(BOOL success) {
+        if (!success) [self vcrTryOpenURLs:urls atIndex:index + 1 path:path];
+    }];
+}
+
+- (void)showRecordingPath {
     [self showAlertWithTitle:@"Recording Path" message:[NSString stringWithFormat:@"Saved to:\n%@\n\nUse Filza or SSH/NewTerm to open this folder.", VCRRecordingsDir]];
 }
 
@@ -149,7 +185,7 @@ static NSString * const VCRRecordingsDir = @"/var/mobile/Media/VolumeChordRecord
         return;
     }
     UIAlertController *confirm = [UIAlertController alertControllerWithTitle:@"Delete All Recordings?"
-                                                                     message:[NSString stringWithFormat:@"This will delete %lu .m4a file(s) from:\n%@", (unsigned long)files.count, VCRRecordingsDir]
+                                                                     message:[NSString stringWithFormat:@"This will delete %lu media file(s) from:\n%@", (unsigned long)files.count, VCRRecordingsDir]
                                                               preferredStyle:UIAlertControllerStyleAlert];
     [confirm addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
     [confirm addAction:[UIAlertAction actionWithTitle:@"Delete All" style:UIAlertActionStyleDestructive handler:^(__unused UIAlertAction *action) {
