@@ -528,6 +528,30 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>label</key>
+			<string>Debug Log</string>
+			<key>footerText</key>
+			<string>Every trigger is written to /var/mobile/Library/Logs/VolumeChordRecorder.log so you can see whether presses and gestures actually arrive. Show Debug Log displays the last 30 lines.</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>Show Debug Log</string>
+			<key>action</key>
+			<string>showDebugLog</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>Clear Debug Log</string>
+			<key>action</key>
+			<string>clearDebugLog</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
 			<string>Actions</string>
 		</dict>
 		<dict>

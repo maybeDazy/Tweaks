@@ -75,12 +75,52 @@ static NSString *vcrCurrentVideoPath = nil;
 static BOOL VCRPressTypeIsVolumeUp(NSInteger type) { return type == VCR_PRESS_TYPE_VOLUME_UP; }
 static BOOL VCRPressTypeIsVolumeDown(NSInteger type) { return type == VCR_PRESS_TYPE_VOLUME_DOWN; }
 
+static NSString *VCRDebugLogPath(void) {
+    return @"/var/mobile/Library/Logs/VolumeChordRecorder.log";
+}
+
+// NSLog only reaches the unified log, which cannot be read on a device without a syslog
+// tool (and cannot be read over SSH at all). Mirror every line to a file so it is possible
+// to prove the tweak loaded and to see exactly which trigger fired. Capped at 512 KB.
+static void VCRAppendLogLine(NSString *msg) {
+    static NSDateFormatter *stampFormatter = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        stampFormatter = [NSDateFormatter new];
+        stampFormatter.dateFormat = @"HH:mm:ss.SSS";
+    });
+
+    NSString *line = [NSString stringWithFormat:@"%@ %@\n", [stampFormatter stringFromDate:[NSDate date]], msg];
+    NSString *path = VCRDebugLogPath();
+    NSFileManager *fm = [NSFileManager defaultManager];
+    [fm createDirectoryAtPath:[path stringByDeletingLastPathComponent] withIntermediateDirectories:YES attributes:nil error:nil];
+
+    NSFileHandle *handle = [NSFileHandle fileHandleForWritingAtPath:path];
+    if (!handle) {
+        [line writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
+        return;
+    }
+    @try {
+        unsigned long long size = [handle seekToEndOfFile];
+        if (size > 512ULL * 1024ULL) {
+            [handle closeFile];
+            [line writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
+        } else {
+            [handle writeData:[line dataUsingEncoding:NSUTF8StringEncoding]];
+            [handle closeFile];
+        }
+    } @catch (__unused NSException *exception) {
+        [handle closeFile];
+    }
+}
+
 static void VCRLog(NSString *fmt, ...) {
     va_list args;
     va_start(args, fmt);
     NSString *msg = [[NSString alloc] initWithFormat:fmt arguments:args];
     va_end(args);
     NSLog(@"%@ %@", VCRPrefix, msg);
+    VCRAppendLogLine(msg);
 }
 
 static BOOL VCRBoolPref(NSString *key, BOOL fallback) {

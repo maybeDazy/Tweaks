@@ -205,6 +205,32 @@ static NSString * const VCRRecordingsDir = @"/var/mobile/Media/VolumeChordRecord
     [self presentViewController:confirm animated:YES completion:nil];
 }
 
+// Read back the tweak's file log (it mirrors every VCRLog line to disk).
+- (void)showDebugLog {
+    NSString *path = @"/var/mobile/Library/Logs/VolumeChordRecorder.log";
+    NSString *content = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil];
+    if (content.length == 0) {
+        [self showAlertWithTitle:@"Debug Log" message:@"No log file yet.\n\nTrigger something (swipe or volume chord), then look again."];
+        return;
+    }
+    NSArray<NSString *> *lines = [content componentsSeparatedByString:@"\n"];
+    NSUInteger limit = 30;
+    NSArray<NSString *> *tail = lines.count > limit ? [lines subarrayWithRange:NSMakeRange(lines.count - limit, limit)] : lines;
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Debug Log (last 30 lines)"
+                                                                  message:[tail componentsJoinedByString:@"\n"]
+                                                           preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Copy All" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) {
+        [UIPasteboard generalPasteboard].string = content;
+    }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Close" style:UIAlertActionStyleCancel handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
+- (void)clearDebugLog {
+    [[NSFileManager defaultManager] removeItemAtPath:@"/var/mobile/Library/Logs/VolumeChordRecorder.log" error:nil];
+    [self showAlertWithTitle:@"Debug Log" message:@"Cleared."];
+}
+
 - (void)testHaptic {
     AudioServicesPlaySystemSound(1519);
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.12 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
