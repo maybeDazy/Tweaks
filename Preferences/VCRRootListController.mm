@@ -207,7 +207,7 @@ static NSString * const VCRRecordingsDir = @"/var/mobile/Media/VolumeChordRecord
 
 // Read back the tweak's file log (it mirrors every VCRLog line to disk).
 - (void)showDebugLog {
-    NSString *path = @"/var/mobile/Library/Logs/VolumeChordRecorder.log";
+    NSString *path = @"/var/mobile/Documents/VolumeChordRecorder.log";
     NSString *content = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil];
     if (content.length == 0) {
         [self showAlertWithTitle:@"Debug Log" message:@"No log file yet.\n\nTrigger something (swipe or volume chord), then look again."];
@@ -227,7 +227,7 @@ static NSString * const VCRRecordingsDir = @"/var/mobile/Media/VolumeChordRecord
 }
 
 - (void)clearDebugLog {
-    [[NSFileManager defaultManager] removeItemAtPath:@"/var/mobile/Library/Logs/VolumeChordRecorder.log" error:nil];
+    [[NSFileManager defaultManager] removeItemAtPath:@"/var/mobile/Documents/VolumeChordRecorder.log" error:nil];
     [self showAlertWithTitle:@"Debug Log" message:@"Cleared."];
 }
 

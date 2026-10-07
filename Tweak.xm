@@ -76,7 +76,7 @@ static BOOL VCRPressTypeIsVolumeUp(NSInteger type) { return type == VCR_PRESS_TY
 static BOOL VCRPressTypeIsVolumeDown(NSInteger type) { return type == VCR_PRESS_TYPE_VOLUME_DOWN; }
 
 static NSString *VCRDebugLogPath(void) {
-    return @"/var/mobile/Library/Logs/VolumeChordRecorder.log";
+    return @"/var/mobile/Documents/VolumeChordRecorder.log";
 }
 
 // NSLog only reaches the unified log, which cannot be read on a device without a syslog
