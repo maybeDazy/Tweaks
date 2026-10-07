@@ -69,6 +69,40 @@ Start/Stop Haptic Feedback: ON
 - Show Recording Path: 녹음 저장 위치 표시
 - Respring: SpringBoard 재시작
 
+## 카메라 사진 / 영상 캡처 (4손가락 스와이프)
+
+설정 앱 → Volume Chord Recorder → Camera Capture 에서 켭니다. 기본값은 OFF입니다.
+
+```text
+4-Finger Swipe Down = Photo   (사진 1장)
+4-Finger Swipe Up   = Video   (영상 녹화 시작/정지 토글)
+Camera Swipe Distance: 140
+```
+
+- 4손가락 스트림은 카메라 제스처가 전담하므로, 3손가락 녹음 토글과 충돌하지 않습니다.
+- 저장 위치는 오디오와 같은 폴더입니다: `/var/mobile/Media/VolumeChordRecorder/` (`.jpg`, `.mp4`).
+- **무음**: `AVCapturePhotoOutput` / `AVCaptureMovieFileOutput`은 셔터음·녹화음을 스스로 재생하지 않습니다. 그 소리는 시스템 Camera 앱이 직접 트는 것이라, 트윅이 직접 찍으면 태생적으로 무음입니다. 별도 억제 코드가 필요 없습니다.
+- 영상에는 **오디오 트랙이 없습니다**(마이크 입력을 세션에 추가하지 않음) — 무음 영상입니다.
+- 사진은 `AVCaptureSessionPresetPhoto`, 영상은 `AVCaptureSessionPresetHigh`로 촬영 시점에 세션을 재구성합니다(AVCam 표준 패턴). 한 프리셋으로는 사진 화질과 영상 녹화를 동시에 만족할 수 없기 때문입니다.
+- 카메라는 배타적 자원입니다. 다른 앱(카메라/영상통화)이 점유 중이면 캡처가 실패합니다. 세션은 캡처가 끝나면 즉시 stop 하므로 평상시 카메라를 붙잡지 않습니다.
+
+### 현재 구현의 한계 (정직)
+
+1. **개인정보 표시등(초록/주황 점)은 계속 표시됩니다.** iOS 14+ 시스템 표시등이고, SpringBoard가 카메라를 잡는 한 뜹니다. 끄는 공개 API는 없습니다. 숨기려면 SpringBoard 내부 인디케이터 UI 클래스를 후킹해야 하는데, 클래스명이 iOS 버전마다 달라 **실제 이름을 기기에서 추출한 뒤에만** 후킹할 수 있습니다(추측 후킹은 로드 시점 크래시).
+2. **TCC**: 카메라 접근 권한은 트윅이 아니라 로드되는 프로세스(SpringBoard)의 `kTCCServiceCamera`를 따릅니다. 마이크 녹음이 되므로 가능성이 높지만, 로그로 실측해야 합니다:
+
+```bash
+log stream --predicate 'eventMessage contains "VolumeChordRecorder"' --info
+```
+
+```text
+[VolumeChordRecorder] Camera TCC authorizationStatus=3   # 3 = Authorized
+[VolumeChordRecorder] Camera: session configured device=Back Camera
+[VolumeChordRecorder] Camera photo saved: /var/mobile/Media/VolumeChordRecorder/VCR_...jpg
+```
+
+`authorizationStatus`가 3이 아니면(0=NotDetermined,1=Restricted,2=Denied) SpringBoard에 카메라 권한이 없는 것이므로, 별도 경로(예: entitlement를 가진 헬퍼 데몬, 또는 TCC 우회)가 필요합니다.
+
 ## 저장 위치
 
 ```text

@@ -31,6 +31,28 @@ static NSTimer *maxRecordTimer = nil;
 static AVAudioRecorder *recorder = nil;
 static BOOL isRecording = NO;
 
+// --- Camera capture (photo / video) ---
+// Trigger: 4-finger swipe (down = photo, up = video toggle). Runs inside SpringBoard,
+// so camera access depends on SpringBoard's TCC authorization, not the tweak's.
+static BOOL vcrCameraPhotoTrigger = NO;
+static BOOL vcrCameraVideoTrigger = NO;
+static CGFloat vcrCameraSwipeDistance = 140.0;
+static NSInteger vcrCameraFingerCount = 4;
+// Device/quality selection
+static NSInteger vcrCameraPosition = 0;        // 0 = back, 1 = front
+static NSInteger vcrCameraLens = 1;            // 1 = 1x wide, 2 = 0.5x ultra-wide (back only)
+static NSString *vcrCameraVideoPreset = @"1920x1080";
+static NSInteger vcrCameraFrameRate = 30;      // 24 / 30 / 60
+static NSString *vcrCameraPhotoQuality = @"quality"; // speed / balanced / quality
+static AVCaptureSession *vcrCaptureSession = nil;
+static AVCapturePhotoOutput *vcrPhotoOutput = nil;
+static AVCaptureMovieFileOutput *vcrMovieOutput = nil;
+static BOOL vcrCameraRecording = NO;
+static BOOL vcrCameraAuthorized = NO;
+static dispatch_queue_t vcrCaptureQueue = nil;
+static NSTimer *vcrMaxVideoTimer = nil;
+static NSString *vcrCurrentVideoPath = nil;
+
 #ifndef VCR_PRESS_TYPE_VOLUME_UP
 #define VCR_PRESS_TYPE_VOLUME_UP 102
 #endif
@@ -78,6 +100,16 @@ static double VCRDoublePref(NSString *key, double fallback, double minValue, dou
     return result;
 }
 
+static NSString *VCRStringPref(NSString *key, NSString *fallback) {
+    CFPreferencesAppSynchronize((__bridge CFStringRef)VCRPrefsID);
+    CFPropertyListRef value = CFPreferencesCopyAppValue((__bridge CFStringRef)key, (__bridge CFStringRef)VCRPrefsID);
+    if (!value) return fallback;
+    NSString *result = fallback;
+    if (CFGetTypeID(value) == CFStringGetTypeID()) result = [(__bridge NSString *)value copy];
+    CFRelease(value);
+    return result;
+}
+
 static void VCRLoadPrefs(void) {
     vcrNCTransparencyEnabled = VCRBoolPref(@"ncTransparencyEnabled", NO);
     vcrNCWallpaperAlpha = (CGFloat)VCRDoublePref(@"ncWallpaperAlpha", 0.00, 0.0, 1.0);
@@ -93,6 +125,19 @@ static void VCRLoadPrefs(void) {
     vcrThreeFingerSwipeDownTrigger = VCRBoolPref(@"threeFingerSwipeDownTrigger", YES);
     vcrThreeFingerSwipeDistance = (CGFloat)VCRDoublePref(@"threeFingerSwipeDistance", 140.0, 60.0, 500.0);
     vcrLogGestures = VCRBoolPref(@"logGestures", NO);
+    vcrCameraPhotoTrigger = VCRBoolPref(@"cameraPhotoTrigger", NO);
+    vcrCameraVideoTrigger = VCRBoolPref(@"cameraVideoTrigger", NO);
+    vcrCameraSwipeDistance = (CGFloat)VCRDoublePref(@"cameraSwipeDistance", 140.0, 60.0, 500.0);
+    vcrCameraPosition = (NSInteger)VCRDoublePref(@"cameraPosition", 0, 0, 1);
+    vcrCameraLens = (NSInteger)VCRDoublePref(@"cameraLens", 1, 1, 2);
+    vcrCameraFrameRate = (NSInteger)VCRDoublePref(@"cameraFrameRate", 30, 1, 240);
+    vcrCameraVideoPreset = VCRStringPref(@"cameraVideoPreset", @"1920x1080");
+    vcrCameraPhotoQuality = VCRStringPref(@"cameraPhotoQuality", @"quality");
+
+    VCRLog(@"Camera prefs photo=%d video=%d swipeDistance=%.0f position=%ld lens=%ld preset=%@ fps=%ld quality=%@",
+           vcrCameraPhotoTrigger, vcrCameraVideoTrigger, vcrCameraSwipeDistance,
+           (long)vcrCameraPosition, (long)vcrCameraLens, vcrCameraVideoPreset,
+           (long)vcrCameraFrameRate, vcrCameraPhotoQuality);
 
     VCRLog(@"Prefs loaded enabled=%d volumeChord=%d threeSwipe=%d swipeDistance=%.0f hold=%.2fs max=%.0fs haptics=%d logPresses=%d logGestures=%d nc=%d wallpaper=%.2f blur=%.2f dim=%.2f",
            vcrEnabled, vcrVolumeChordTrigger, vcrThreeFingerSwipeDownTrigger, vcrThreeFingerSwipeDistance,
@@ -134,10 +179,14 @@ static void VCRShowNotification(NSString *title, NSString *message) {
 
 static NSString *VCRRecordingDirectory(void) { return @"/var/mobile/Media/VolumeChordRecorder"; }
 
-static NSString *VCRTimestampFilename(void) {
+static NSString *VCRTimestampFilenameWithExt(NSString *ext) {
     NSDateFormatter *fmt = [NSDateFormatter new];
     fmt.dateFormat = @"yyyyMMdd_HHmmss";
-    return [NSString stringWithFormat:@"VCR_%@.m4a", [fmt stringFromDate:[NSDate date]]];
+    return [NSString stringWithFormat:@"VCR_%@.%@", [fmt stringFromDate:[NSDate date]], ext];
+}
+
+static NSString *VCRTimestampFilename(void) {
+    return VCRTimestampFilenameWithExt(@"m4a");
 }
 
 static void VCRStopRecording(void);
@@ -216,6 +265,310 @@ static void VCRToggleRecording(void) {
     else VCRStartRecording();
 }
 
+// ===================== Camera capture =====================
+// Silent by default: AVCapturePhotoOutput / AVCaptureMovieFileOutput do not play
+// shutter/record sounds themselves (the system Camera app adds those). Files are
+// written to the same VCR folder as audio recordings.
+
+static void VCRTakePhoto(void);
+static void VCRStartVideoRecording(void);
+static void VCRStopVideoRecording(void);
+
+static void VCRCameraCheckAuthorization(void) {
+    AVAuthorizationStatus status = [AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeVideo];
+    VCRLog(@"Camera TCC authorizationStatus=%ld", (long)status);
+    if (status == AVAuthorizationStatusAuthorized) {
+        vcrCameraAuthorized = YES;
+    } else if (status == AVAuthorizationStatusNotDetermined) {
+        // SpringBoard is a system daemon; the prompt may or may not appear.
+        [AVCaptureDevice requestAccessForMediaType:AVMediaTypeVideo completionHandler:^(BOOL granted) {
+            vcrCameraAuthorized = granted;
+            VCRLog(@"Camera TCC request granted=%d", granted);
+        }];
+    } else {
+        vcrCameraAuthorized = NO;
+    }
+}
+
+static void VCRCameraEnsureSession(void) {
+    if (vcrCaptureSession) return;
+    if (!vcrCameraAuthorized) return;
+    if (!vcrCaptureQueue) vcrCaptureQueue = dispatch_queue_create("com.yourname.volumechordrecorder.camera", DISPATCH_QUEUE_SERIAL);
+    vcrCaptureSession = [[AVCaptureSession alloc] init];
+    vcrPhotoOutput = [[AVCapturePhotoOutput alloc] init];
+    vcrMovieOutput = [[AVCaptureMovieFileOutput alloc] init];
+    VCRLog(@"Camera: session object created");
+}
+
+// Pick the capture device for the configured position (front/back) and lens (1x / 0.5x).
+static AVCaptureDevice *VCRCameraSelectDevice(void) {
+    AVCaptureDevicePosition position = (vcrCameraPosition == 1) ? AVCaptureDevicePositionFront : AVCaptureDevicePositionBack;
+    AVCaptureDeviceType type = AVCaptureDeviceTypeBuiltInWideAngleCamera;
+    if (position == AVCaptureDevicePositionBack && vcrCameraLens == 2) {
+        type = AVCaptureDeviceTypeBuiltInUltraWideCamera; // 0.5x is back-only
+    }
+    AVCaptureDeviceDiscoverySession *discovery =
+        [AVCaptureDeviceDiscoverySession discoverySessionWithDeviceTypes:@[type]
+                                                               mediaType:AVMediaTypeVideo
+                                                                position:position];
+    AVCaptureDevice *device = discovery.devices.firstObject;
+    if (!device && type != AVCaptureDeviceTypeBuiltInWideAngleCamera) {
+        discovery = [AVCaptureDeviceDiscoverySession discoverySessionWithDeviceTypes:@[AVCaptureDeviceTypeBuiltInWideAngleCamera]
+                                                                          mediaType:AVMediaTypeVideo
+                                                                           position:position];
+        device = discovery.devices.firstObject;
+    }
+    return device;
+}
+
+static AVCapturePhotoQualityPrioritization VCRCameraPhotoQualityValue(void) {
+    if ([vcrCameraPhotoQuality isEqualToString:@"speed"]) return AVCapturePhotoQualityPrioritizationSpeed;
+    if ([vcrCameraPhotoQuality isEqualToString:@"balanced"]) return AVCapturePhotoQualityPrioritizationBalanced;
+    return AVCapturePhotoQualityPrioritizationQuality;
+}
+
+static NSString *VCRCameraVideoPresetConstant(void) {
+    NSString *p = vcrCameraVideoPreset;
+    if ([p isEqualToString:@"medium"]) return AVCaptureSessionPresetMedium;
+    if ([p isEqualToString:@"high"]) return AVCaptureSessionPresetHigh;
+    if ([p isEqualToString:@"1280x720"]) return AVCaptureSessionPreset1280x720;
+    if ([p isEqualToString:@"1920x1080"]) return AVCaptureSessionPreset1920x1080;
+    if ([p isEqualToString:@"3840x2160"]) return AVCaptureSessionPreset3840x2160;
+    return AVCaptureSessionPreset1920x1080;
+}
+
+// Try to force the requested frame rate on the device by selecting a format that
+// supports it, then pinning min/max frame duration.
+static void VCRCameraApplyFrameRate(AVCaptureDevice *device) {
+    int32_t fps = (int32_t)vcrCameraFrameRate;
+    if (!device || fps <= 0) return;
+
+    NSError *error = nil;
+    if (![device lockForConfiguration:&error]) {
+        VCRLog(@"Camera: lockForConfiguration failed %@", error);
+        return;
+    }
+
+    AVCaptureDeviceFormat *chosen = nil;
+    int64_t chosenArea = 0;
+    for (AVCaptureDeviceFormat *format in device.formats) {
+        float maxRate = 0.0f;
+        for (AVFrameRateRange *range in format.videoSupportedFrameRateRanges) {
+            if (range.maxFrameRate > maxRate) maxRate = range.maxFrameRate;
+        }
+        if (maxRate < (float)fps) continue;
+        CMVideoDimensions dims = CMVideoFormatDescriptionGetDimensions(format.formatDescription);
+        int64_t area = (int64_t)dims.width * (int64_t)dims.height;
+        if (!chosen || area > chosenArea) { chosen = format; chosenArea = area; }
+    }
+
+    if (chosen) {
+        CMVideoDimensions dims = CMVideoFormatDescriptionGetDimensions(chosen.formatDescription);
+        device.activeFormat = chosen;
+        device.activeVideoMinFrameDuration = CMTimeMake(1, fps);
+        device.activeVideoMaxFrameDuration = CMTimeMake(1, fps);
+        VCRLog(@"Camera: fps=%d applied on %dx%d", (int)fps, (int)dims.width, (int)dims.height);
+    } else {
+        VCRLog(@"Camera: no format supports fps=%d (keeping default)", (int)fps);
+    }
+    [device unlockForConfiguration];
+}
+
+// Rebuild the (stopped) session for a capture mode. Must run on vcrCaptureQueue.
+// Rebuilding the input each time makes position/lens changes take effect immediately.
+static BOOL VCRCameraPrepareSession(BOOL forVideo) {
+    if (!vcrCaptureSession) return NO;
+
+    [vcrCaptureSession beginConfiguration];
+    for (AVCaptureInput *inp in [vcrCaptureSession.inputs copy]) [vcrCaptureSession removeInput:inp];
+    for (AVCaptureOutput *out in [vcrCaptureSession.outputs copy]) [vcrCaptureSession removeOutput:out];
+
+    AVCaptureDevice *device = VCRCameraSelectDevice();
+    if (!device) {
+        [vcrCaptureSession commitConfiguration];
+        VCRLog(@"Camera: no device for position=%ld lens=%ld", (long)vcrCameraPosition, (long)vcrCameraLens);
+        return NO;
+    }
+
+    NSError *error = nil;
+    AVCaptureDeviceInput *input = [AVCaptureDeviceInput deviceInputWithDevice:device error:&error];
+    if (!input || ![vcrCaptureSession canAddInput:input]) {
+        [vcrCaptureSession commitConfiguration];
+        VCRLog(@"Camera: input failed %@", error);
+        return NO;
+    }
+    [vcrCaptureSession addInput:input];
+
+    if (forVideo) {
+        NSString *preset = VCRCameraVideoPresetConstant();
+        if (![vcrCaptureSession canSetSessionPreset:preset]) {
+            VCRLog(@"Camera: preset %@ unsupported, falling back to High", preset);
+            preset = AVCaptureSessionPresetHigh;
+        }
+        vcrCaptureSession.sessionPreset = preset;
+        if (vcrMovieOutput && [vcrCaptureSession canAddOutput:vcrMovieOutput]) [vcrCaptureSession addOutput:vcrMovieOutput];
+        else VCRLog(@"Camera: cannot add movie output");
+        [vcrCaptureSession commitConfiguration];
+        VCRLog(@"Camera: video session device=%@ preset=%@ lens=%ld pos=%ld", device.localizedName, preset, (long)vcrCameraLens, (long)vcrCameraPosition);
+        VCRCameraApplyFrameRate(device);
+    } else {
+        if ([vcrCaptureSession canSetSessionPreset:AVCaptureSessionPresetPhoto]) vcrCaptureSession.sessionPreset = AVCaptureSessionPresetPhoto;
+        if (vcrPhotoOutput && [vcrCaptureSession canAddOutput:vcrPhotoOutput]) [vcrCaptureSession addOutput:vcrPhotoOutput];
+        else VCRLog(@"Camera: cannot add photo output");
+        [vcrCaptureSession commitConfiguration];
+        VCRLog(@"Camera: photo session device=%@ lens=%ld pos=%ld", device.localizedName, (long)vcrCameraLens, (long)vcrCameraPosition);
+    }
+    return YES;
+}
+
+static void VCRCameraStartRunningSync(void) {
+    if (!vcrCaptureSession) return;
+    if (!vcrCaptureSession.isRunning) [vcrCaptureSession startRunning];
+}
+
+static void VCRCameraStopRunning(void) {
+    if (!vcrCaptureSession) return;
+    if (vcrCaptureSession.isRunning) [vcrCaptureSession stopRunning];
+}
+
+@interface VCRPhotoCaptureDelegate : NSObject <AVCapturePhotoCaptureDelegate>
+@end
+
+@implementation VCRPhotoCaptureDelegate
+- (void)captureOutput:(AVCapturePhotoOutput *)output didFinishProcessingPhoto:(AVCapturePhoto *)photo error:(NSError *)error {
+    if (error) {
+        VCRLog(@"Camera photo error: %@", error);
+        VCRShowNotification(@"VolumeChordRecorder", @"Photo failed");
+    } else {
+        NSData *imageData = [photo fileDataRepresentation];
+        NSString *dir = VCRRecordingDirectory();
+        [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
+        NSString *path = [dir stringByAppendingPathComponent:VCRTimestampFilenameWithExt(@"jpg")];
+        NSError *writeError = nil;
+        if (imageData && [imageData writeToFile:path options:NSDataWritingAtomic error:&writeError]) {
+            VCRLog(@"Camera photo saved: %@ (%lu bytes)", path, (unsigned long)imageData.length);
+            VCRShowNotification(@"VolumeChordRecorder", @"Photo");
+        } else {
+            VCRLog(@"Camera photo write failed: %@", writeError);
+        }
+    }
+    if (vcrCaptureQueue) dispatch_async(vcrCaptureQueue, ^{ VCRCameraStopRunning(); });
+}
+@end
+
+@interface VCRMovieRecordingDelegate : NSObject <AVCaptureFileOutputRecordingDelegate>
+@end
+
+@implementation VCRMovieRecordingDelegate
+- (void)fileOutput:(AVCaptureFileOutput *)output
+didFinishRecordingToOutputFileAtURL:(NSURL *)outputFileURL
+  fromConnections:(NSArray<AVCaptureConnection *> *)connections
+            error:(NSError *)error {
+    BOOL wasRecording = vcrCameraRecording;
+    vcrCameraRecording = NO;
+    if (vcrMaxVideoTimer) { [vcrMaxVideoTimer invalidate]; vcrMaxVideoTimer = nil; }
+    NSString *target = vcrCurrentVideoPath;
+    vcrCurrentVideoPath = nil;
+
+    if (error) VCRLog(@"Camera video error: %@", error);
+
+    if (target) {
+        NSError *moveError = nil;
+        NSURL *targetURL = [NSURL fileURLWithPath:target];
+        if ([[NSFileManager defaultManager] fileExistsAtPath:target]) {
+            [[NSFileManager defaultManager] removeItemAtPath:target error:nil];
+        }
+        if ([[NSFileManager defaultManager] moveItemAtURL:outputFileURL toURL:targetURL error:&moveError]) {
+            VCRLog(@"Camera video saved: %@", target);
+            VCRShowNotification(@"VolumeChordRecorder", @"Video");
+        } else {
+            VCRLog(@"Camera video move failed: %@", moveError);
+        }
+    }
+    if (wasRecording) VCRHapticStop();
+    if (vcrCaptureQueue) dispatch_async(vcrCaptureQueue, ^{ VCRCameraStopRunning(); });
+}
+@end
+
+static void VCRTakePhoto(void) {
+    if (!vcrEnabled || !vcrCameraPhotoTrigger) return;
+    if (vcrCameraRecording) { VCRLog(@"Camera busy: video recording in progress"); return; }
+
+    VCRCameraCheckAuthorization();
+    VCRCameraEnsureSession();
+    if (!vcrCaptureSession || !vcrPhotoOutput) {
+        VCRLog(@"Camera unavailable for photo");
+        VCRShowNotification(@"VolumeChordRecorder", @"Camera unavailable");
+        return;
+    }
+    if (!vcrCaptureQueue) vcrCaptureQueue = dispatch_queue_create("com.yourname.volumechordrecorder.camera", DISPATCH_QUEUE_SERIAL);
+
+    VCRHapticStart();
+    AVCapturePhotoSettings *settings = [AVCapturePhotoSettings photoSettings];
+    settings.photoQualityPrioritization = VCRCameraPhotoQualityValue();
+    VCRPhotoCaptureDelegate *delegate = [VCRPhotoCaptureDelegate new];
+    dispatch_async(vcrCaptureQueue, ^{
+        if (VCRCameraPrepareSession(NO)) {
+            VCRCameraStartRunningSync();
+            [vcrPhotoOutput capturePhotoWithSettings:settings delegate:delegate];
+        }
+    });
+    VCRLog(@"Camera photo triggered");
+}
+
+static void VCRStartVideoRecording(void) {
+    if (!vcrEnabled || !vcrCameraVideoTrigger) return;
+    if (vcrCameraRecording) return;
+
+    VCRCameraCheckAuthorization();
+    VCRCameraEnsureSession();
+    if (!vcrCaptureSession || !vcrMovieOutput) {
+        VCRLog(@"Camera unavailable for video");
+        VCRShowNotification(@"VolumeChordRecorder", @"Camera unavailable");
+        return;
+    }
+    if (!vcrCaptureQueue) vcrCaptureQueue = dispatch_queue_create("com.yourname.volumechordrecorder.camera", DISPATCH_QUEUE_SERIAL);
+
+    NSString *dir = VCRRecordingDirectory();
+    [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
+    NSString *path = [dir stringByAppendingPathComponent:VCRTimestampFilenameWithExt(@"mp4")];
+    vcrCurrentVideoPath = path;
+
+    NSURL *tempURL = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:@"VCR_recording.mp4"]];
+    [[NSFileManager defaultManager] removeItemAtURL:tempURL error:nil];
+
+    VCRMovieRecordingDelegate *delegate = [VCRMovieRecordingDelegate new];
+    vcrCameraRecording = YES;
+    dispatch_async(vcrCaptureQueue, ^{
+        if (VCRCameraPrepareSession(YES)) {
+            VCRCameraStartRunningSync();
+            [vcrMovieOutput startRecordingToOutputFileURL:tempURL recordingDelegate:delegate];
+        } else {
+            vcrCameraRecording = NO;
+            if (vcrMaxVideoTimer) { [vcrMaxVideoTimer invalidate]; vcrMaxVideoTimer = nil; }
+            VCRLog(@"Camera: video prepare failed, aborted");
+        }
+    });
+    VCRHapticStart();
+    VCRLog(@"Camera video recording started -> %@", path);
+    VCRShowNotification(@"VolumeChordRecorder", @"REC");
+
+    if (vcrMaxVideoTimer) [vcrMaxVideoTimer invalidate];
+    vcrMaxVideoTimer = [NSTimer scheduledTimerWithTimeInterval:vcrMaxRecordSeconds repeats:NO block:^(__unused NSTimer *timer) {
+        vcrMaxVideoTimer = nil;
+        VCRLog(@"Camera max video time reached, stopping");
+        VCRStopVideoRecording();
+    }];
+}
+
+static void VCRStopVideoRecording(void) {
+    if (!vcrCameraRecording || !vcrMovieOutput) return;
+    VCRLog(@"Camera video stopping");
+    if (vcrMaxVideoTimer) { [vcrMaxVideoTimer invalidate]; vcrMaxVideoTimer = nil; }
+    [vcrMovieOutput stopRecording];
+    // The recording delegate finishes the state transition and stops the session.
+}
+
 static void VCRCancelHoldTimer(void) {
     if (holdTimer) {
         [holdTimer invalidate];
@@ -251,6 +604,38 @@ static NSTimeInterval vcrThreeFingerStartTime = 0.0;
 static NSTimeInterval vcrLastThreeFingerTriggerTime = 0.0;
 
 static NSTimeInterval VCRNow(void) { return [NSDate timeIntervalSinceReferenceDate]; }
+
+// --- Camera capture gesture state (4-finger swipe) ---
+static NSMutableDictionary<NSValue *, NSValue *> *vcrCameraTouchPoints = nil;
+static BOOL vcrCameraTracking = NO;
+static BOOL vcrCameraTriggered = NO;
+static CGPoint vcrCameraStartCentroid = {0.0, 0.0};
+static NSTimeInterval vcrCameraStartTime = 0.0;
+static NSTimeInterval vcrLastCameraTriggerTime = 0.0;
+
+static BOOL VCRCameraGestureMayOwnTouches(NSUInteger count) {
+    return (vcrCameraPhotoTrigger || vcrCameraVideoTrigger) && count >= (NSUInteger)vcrCameraFingerCount;
+}
+
+static CGPoint VCRCentroidForCameraTouches(void) {
+    CGFloat x = 0.0, y = 0.0;
+    NSUInteger count = vcrCameraTouchPoints.count;
+    if (count == 0) return CGPointZero;
+    for (NSValue *value in vcrCameraTouchPoints.allValues) {
+        CGPoint p = [value CGPointValue];
+        x += p.x;
+        y += p.y;
+    }
+    return CGPointMake(x / (CGFloat)count, y / (CGFloat)count);
+}
+
+static void VCRResetCameraGesture(void) {
+    [vcrCameraTouchPoints removeAllObjects];
+    vcrCameraTracking = NO;
+    vcrCameraTriggered = NO;
+    vcrCameraStartCentroid = CGPointZero;
+    vcrCameraStartTime = 0.0;
+}
 
 static CGPoint VCRCentroidForGestureTouches(void) {
     CGFloat x = 0.0, y = 0.0;
@@ -303,6 +688,14 @@ static void VCRProcessThreeFingerSwipeEvent(UIEvent *event) {
     NSUInteger activeCount = vcrGestureTouchPoints.count;
     NSTimeInterval now = VCRNow();
 
+    // Let the camera gesture handler own multi-touch streams that carry >= fingerCount
+    // touches, so a 4-finger swipe does not also toggle audio recording.
+    if (VCRCameraGestureMayOwnTouches(activeCount)) {
+        if (vcrLogGestures) VCRLog(@"Three-finger tracker yields to camera gesture count=%lu", (unsigned long)activeCount);
+        VCRResetThreeFingerGesture();
+        return;
+    }
+
     if (!vcrThreeFingerTracking && activeCount >= 3) {
         vcrThreeFingerTracking = YES;
         vcrThreeFingerTriggered = NO;
@@ -336,6 +729,76 @@ static void VCRProcessThreeFingerSwipeEvent(UIEvent *event) {
     }
 
     if (vcrGestureTouchPoints.count == 0) VCRResetThreeFingerGesture();
+}
+
+static void VCRProcessCameraGestureEvent(UIEvent *event) {
+    if (!vcrEnabled) return;
+    if (!vcrCameraPhotoTrigger && !vcrCameraVideoTrigger) return;
+    if (!event || event.type != UIEventTypeTouches) return;
+
+    NSSet<UITouch *> *touches = [event allTouches];
+    if (touches.count == 0) return;
+    if (!vcrCameraTouchPoints) vcrCameraTouchPoints = [NSMutableDictionary dictionary];
+
+    BOOL sawEndOrCancel = NO;
+    for (UITouch *touch in touches) {
+        NSValue *key = [NSValue valueWithNonretainedObject:touch];
+        CGPoint point = [touch locationInView:touch.window ?: touch.view];
+        UITouchPhase phase = touch.phase;
+
+        if (phase == UITouchPhaseBegan || phase == UITouchPhaseMoved || phase == UITouchPhaseStationary || phase == UITouchPhaseEnded) {
+            vcrCameraTouchPoints[key] = [NSValue valueWithCGPoint:point];
+        }
+        if (phase == UITouchPhaseEnded || phase == UITouchPhaseCancelled) sawEndOrCancel = YES;
+    }
+
+    NSUInteger activeCount = vcrCameraTouchPoints.count;
+    NSTimeInterval now = VCRNow();
+
+    if (!vcrCameraTracking && activeCount >= (NSUInteger)vcrCameraFingerCount) {
+        vcrCameraTracking = YES;
+        vcrCameraTriggered = NO;
+        vcrCameraStartCentroid = VCRCentroidForCameraTouches();
+        vcrCameraStartTime = now;
+        if (vcrLogGestures) VCRLog(@"Camera gesture tracking began count=%lu start=(%.1f, %.1f)", (unsigned long)activeCount, vcrCameraStartCentroid.x, vcrCameraStartCentroid.y);
+    }
+
+    if (vcrCameraTracking && !vcrCameraTriggered && activeCount >= (NSUInteger)vcrCameraFingerCount) {
+        CGPoint current = VCRCentroidForCameraTouches();
+        CGFloat dy = current.y - vcrCameraStartCentroid.y;
+        CGFloat dx = fabs(current.x - vcrCameraStartCentroid.x);
+        NSTimeInterval elapsed = now - vcrCameraStartTime;
+        CGFloat distance = vcrCameraSwipeDistance;
+
+        if (fabs(dy) >= distance && dx <= MAX(120.0, distance * 1.25) && elapsed <= 1.6) {
+            vcrCameraTriggered = YES;
+            if (now - vcrLastCameraTriggerTime >= 1.0) {
+                vcrLastCameraTriggerTime = now;
+                if (dy > 0.0) {
+                    VCRLog(@"Camera gesture swipe down -> photo");
+                    VCRTakePhoto();
+                } else {
+                    VCRLog(@"Camera gesture swipe up -> video toggle");
+                    if (vcrCameraRecording) VCRStopVideoRecording();
+                    else VCRStartVideoRecording();
+                }
+            }
+        } else if (elapsed > 2.0) {
+            if (vcrLogGestures) VCRLog(@"Camera gesture timed out dy=%.1f dx=%.1f", dy, dx);
+            VCRResetCameraGesture();
+            return;
+        }
+    }
+
+    if (sawEndOrCancel) {
+        for (UITouch *touch in touches) {
+            if (touch.phase == UITouchPhaseEnded || touch.phase == UITouchPhaseCancelled) {
+                [vcrCameraTouchPoints removeObjectForKey:[NSValue valueWithNonretainedObject:touch]];
+            }
+        }
+    }
+
+    if (vcrCameraTouchPoints.count == 0) VCRResetCameraGesture();
 }
 
 static BOOL VCRNCNameContains(NSString *name, NSString *needle) {
@@ -662,6 +1125,7 @@ static void VCRNCApplyToMaterialView(UIView *view) {
 %hook SpringBoard
 
 - (void)sendEvent:(UIEvent *)event {    
+    VCRProcessCameraGestureEvent(event);
     VCRProcessThreeFingerSwipeEvent(event);
     %orig(event);
 }
@@ -894,6 +1358,10 @@ static void VCRNCApplyToMaterialView(UIView *view) {
             if (!vcrEnabled && isRecording) {
                 VCRLog(@"Disabled from Settings while recording, stopping");
                 VCRStopRecording();
+            }
+            if (!vcrEnabled && vcrCameraRecording) {
+                VCRLog(@"Disabled from Settings while recording video, stopping");
+                VCRStopVideoRecording();
             }
             VCRNCApplyToAllKnownWindows();
         });
