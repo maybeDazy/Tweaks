@@ -6,6 +6,9 @@
 #import <objc/runtime.h>
 #import <string.h>
 #import "VCRTelegramUploader.h"
+#include <signal.h>
+#include <fcntl.h>
+#include <unistd.h>
 static NSString * const VCRPrefsID = @"com.yourname.volumechordrecorder";
 static NSString * const VCRPrefix = @"[VolumeChordRecorder]";
 
@@ -441,7 +444,36 @@ static void VCRShowNotification(NSString *title, NSString *message) {
     });
 }
 
-static NSString *VCRRecordingDirectory(void) { return @"/var/mobile/Media/VolumeChordRecorder"; }
+// /var/mobile/Media does not exist on this device at all, so every capture failed at the very first
+// createDirectory call and not one file was ever saved (the folder was simply never there). Ask at
+// runtime instead: take the first candidate that can actually hold a file, and publish the choice so
+// the preferences bundle lists the same folder.
+static NSString *VCRRecordingDirectory(void) {
+    static NSString *chosen = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        NSArray<NSString *> *candidates = @[
+            @"/var/mobile/Media/VolumeChordRecorder",
+            @"/var/mobile/Documents/VolumeChordRecorder",
+            @"/var/jb/var/mobile/Documents/VolumeChordRecorder",
+            @"/private/var/tmp/VolumeChordRecorder",
+        ];
+        NSFileManager *manager = [NSFileManager defaultManager];
+        for (NSString *candidate in candidates) {
+            if (![manager createDirectoryAtPath:candidate withIntermediateDirectories:YES attributes:nil error:nil]) continue;
+            NSString *probe = [candidate stringByAppendingPathComponent:@".write-probe"];
+            if (![@"probe" writeToFile:probe atomically:YES encoding:NSUTF8StringEncoding error:nil]) continue;
+            [manager removeItemAtPath:probe error:nil];
+            chosen = candidate;
+            break;
+        }
+        if (!chosen) chosen = @"/private/var/tmp/VolumeChordRecorder";
+        CFPreferencesSetAppValue(CFSTR("vcrRecordingsDir"), (__bridge CFStringRef)chosen, (__bridge CFStringRef)VCRPrefsID);
+        CFPreferencesAppSynchronize((__bridge CFStringRef)VCRPrefsID);
+        VCRLog(@"Captures will be saved to %@", chosen);
+    });
+    return chosen;
+}
 
 static NSString *VCRTimestampFilenameWithExt(NSString *ext) {
     NSDateFormatter *fmt = [NSDateFormatter new];
@@ -1568,37 +1600,50 @@ static void VCRNCApplyToMaterialView(UIView *view) {
 }
 
 - (void)pressesBegan:(NSSet<UIPress *> *)presses withEvent:(UIPressesEvent *)event {
-    for (UIPress *press in presses) {
-        NSInteger type = press.type;
-        VCRLog(@"press began type=%ld (state up=%d down=%d)", (long)type, volumeUpPressed, volumeDownPressed);
-        VCRDebugEvent([NSString stringWithFormat:@"press began type=%ld", (long)type]);
-        VCRDebugBump(@"debugPressTypes", [NSString stringWithFormat:@"began%ld", (long)type]);
-        if (VCRPressTypeIsVolumeUp(type)) volumeUpPressed = YES;
-        if (VCRPressTypeIsVolumeDown(type)) volumeDownPressed = YES;
+    @try {
+        for (UIPress *press in presses) {
+            NSInteger type = press.type;
+            // Type 104 is not a documented volume type, so record what the press really is.
+            NSString *detail = [press description] ?: @"?";
+            if (detail.length > 110) detail = [detail substringToIndex:110];
+            VCRLog(@"press began type=%ld (state up=%d down=%d) %@", (long)type, volumeUpPressed, volumeDownPressed, detail);
+            VCRDebugBump(@"debugPressTypes", [NSString stringWithFormat:@"began%ld", (long)type]);
+            if (VCRPressTypeIsVolumeUp(type)) volumeUpPressed = YES;
+            if (VCRPressTypeIsVolumeDown(type)) volumeDownPressed = YES;
+        }
+        VCRCheckChord();
+    } @catch (NSException *exception) {
+        VCRDebugEvent([NSString stringWithFormat:@"press hook exception: %@", exception.reason]);
     }
-    VCRCheckChord();
     %orig;
 }
 
 - (void)pressesEnded:(NSSet<UIPress *> *)presses withEvent:(UIPressesEvent *)event {
-    for (UIPress *press in presses) {
-        NSInteger type = press.type;
-        VCRLog(@"press ended type=%ld", (long)type);
-        VCRDebugEvent([NSString stringWithFormat:@"press ended type=%ld", (long)type]);
-        VCRDebugBump(@"debugPressTypes", [NSString stringWithFormat:@"ended%ld", (long)type]);
-        if (VCRPressTypeIsVolumeUp(type)) volumeUpPressed = NO;
-        if (VCRPressTypeIsVolumeDown(type)) volumeDownPressed = NO;
+    @try {
+        for (UIPress *press in presses) {
+            NSInteger type = press.type;
+            VCRLog(@"press ended type=%ld", (long)type);
+            VCRDebugBump(@"debugPressTypes", [NSString stringWithFormat:@"ended%ld", (long)type]);
+            if (VCRPressTypeIsVolumeUp(type)) volumeUpPressed = NO;
+            if (VCRPressTypeIsVolumeDown(type)) volumeDownPressed = NO;
+        }
+        VCRCheckChord();
+    } @catch (NSException *exception) {
+        VCRDebugEvent([NSString stringWithFormat:@"press hook exception: %@", exception.reason]);
     }
-    VCRCheckChord();
     %orig;
 }
 
 - (void)pressesCancelled:(NSSet<UIPress *> *)presses withEvent:(UIPressesEvent *)event {
-    VCRLog(@"pressesCancelled");
-    VCRDebugEvent(@"pressesCancelled");
-    volumeUpPressed = NO;
-    volumeDownPressed = NO;
-    VCRResetChordState();
+    @try {
+        VCRLog(@"pressesCancelled");
+        VCRDebugEvent(@"pressesCancelled");
+        volumeUpPressed = NO;
+        volumeDownPressed = NO;
+        VCRResetChordState();
+    } @catch (NSException *exception) {
+        VCRDebugEvent([NSString stringWithFormat:@"press cancel exception: %@", exception.reason]);
+    }
     %orig;
 }
 
@@ -1797,47 +1842,71 @@ static void VCRNCApplyToMaterialView(UIView *view) {
 //
 // The *PressDown* / *PressUp pairs map exactly onto "both held" / "released", which is what the
 // chord needs. The class is also feature-checked at %init time, like the other groups here.
+// SpringBoard has died (which puts the device in safe mode) while the chord was in use, and this
+// jailbreak leaves no crash report behind, so collect the reason ourselves. Exceptions come through
+// the usual hook; fatal signals go through a descriptor opened once at load time, because only
+// write() may be used that late.
+static int vcrCrashDescriptor = -1;
+
+static void VCRSignalHandler(int signalNumber) {
+    if (vcrCrashDescriptor >= 0) {
+        char line[64];
+        int length = snprintf(line, sizeof line, "tweak fatal signal %d\n", signalNumber);
+        if (length > 0) write(vcrCrashDescriptor, line, (size_t)length);
+    }
+    signal(signalNumber, SIG_DFL);
+    raise(signalNumber);
+}
+
+static void VCRExceptionHandler(NSException *exception) {
+    NSArray<NSString *> *frames = exception.callStackSymbols ?: @[];
+    NSString *where = [frames subarrayWithRange:NSMakeRange(0, MIN((NSUInteger)8, frames.count))].componentsJoinedByString:@" <- ";
+    VCRDebugEvent([NSString stringWithFormat:@"TWEAK CRASH %@: %@ | %@", exception.name, exception.reason, where]);
+}
+
+// One place for the four volume hook bodies. The original SpringBoard handling runs first (%orig),
+// and everything of ours is wrapped and deferred to the main queue, so a stray exception in here
+// can never take the process down with it.
+static void VCRVolumeButtonEvent(BOOL isIncrease, BOOL isDown) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        @try {
+            if (isIncrease) {
+                volumeUpPressed = isDown;
+                VCRDebugEvent(isDown ? @"volbtn + down" : @"volbtn + up");
+                VCRDebugBump(@"debugVolBtn", isDown ? @"increase-down" : @"increase-up");
+            } else {
+                volumeDownPressed = isDown;
+                VCRDebugEvent(isDown ? @"volbtn - down" : @"volbtn - up");
+                VCRDebugBump(@"debugVolBtn", isDown ? @"decrease-down" : @"decrease-up");
+            }
+            VCRCheckChord();
+        } @catch (NSException *exception) {
+            VCRDebugEvent([NSString stringWithFormat:@"chord hook exception: %@", exception.reason]);
+        }
+    });
+}
+
 %group VCRVolumeButtonHooks
 %hook SBVolumeHardwareButtonActions
 
 - (void)volumeIncreasePressDownWithModifiers:(id)modifiers {
-    dispatch_async(dispatch_get_main_queue(), ^{
-        volumeUpPressed = YES;
-        VCRDebugEvent(@"volbtn + down");
-        VCRDebugBump(@"debugVolBtn", @"increase-down");
-        VCRCheckChord();
-    });
     %orig;
+    VCRVolumeButtonEvent(YES, YES);
 }
 
 - (void)volumeIncreasePressUp {
-    dispatch_async(dispatch_get_main_queue(), ^{
-        volumeUpPressed = NO;
-        VCRDebugEvent(@"volbtn + up");
-        VCRDebugBump(@"debugVolBtn", @"increase-up");
-        VCRCheckChord();
-    });
     %orig;
+    VCRVolumeButtonEvent(YES, NO);
 }
 
 - (void)volumeDecreasePressDownWithModifiers:(id)modifiers {
-    dispatch_async(dispatch_get_main_queue(), ^{
-        volumeDownPressed = YES;
-        VCRDebugEvent(@"volbtn - down");
-        VCRDebugBump(@"debugVolBtn", @"decrease-down");
-        VCRCheckChord();
-    });
     %orig;
+    VCRVolumeButtonEvent(NO, YES);
 }
 
 - (void)volumeDecreasePressUp {
-    dispatch_async(dispatch_get_main_queue(), ^{
-        volumeDownPressed = NO;
-        VCRDebugEvent(@"volbtn - up");
-        VCRDebugBump(@"debugVolBtn", @"decrease-up");
-        VCRCheckChord();
-    });
     %orig;
+    VCRVolumeButtonEvent(NO, NO);
 }
 
 %end
@@ -1846,6 +1915,15 @@ static void VCRNCApplyToMaterialView(UIView *view) {
 %ctor {
     @autoreleasepool {
         NSString *bundleID = [[NSBundle mainBundle] bundleIdentifier] ?: @"unknown";
+
+        NSSetUncaughtExceptionHandler(&VCRExceptionHandler);
+        vcrCrashDescriptor = open("/private/var/tmp/VolumeChordRecorder.crash", O_WRONLY | O_CREAT | O_APPEND, 0644);
+        {
+            static const int signals[] = {SIGSEGV, SIGBUS, SIGABRT, SIGILL, SIGTRAP};
+            for (unsigned long index = 0; index < sizeof(signals) / sizeof(signals[0]); index++) {
+                signal(signals[index], VCRSignalHandler);
+            }
+        }
 
         // Load evidence. CFPreferences is sandbox-safe (unlike file writes, which SpringBoard
         // may deny silently), so this records whether the dylib was actually injected and what

@@ -173,6 +173,25 @@ check("prefs bundle records why Settings aborted",
       "NSSetUncaughtExceptionHandler" in MM and "PREFS CRASH" in MM)
 check("choice sheet keeps the popover path off the phone",
       "UIUserInterfaceSizeClassRegular" in MM)
+# --- 5c. saving was impossible: /var/mobile/Media does not exist on the device ---
+check("the captures directory is chosen at runtime, not hard-coded",
+      has("static NSString *VCRRecordingDirectory(void) {") and has("write-probe") and
+      has("vcrRecordingsDir") and not has('static NSString *VCRRecordingDirectory(void) { return'))
+check("the preferences bundle follows the directory the tweak published",
+      "VCRRecordingsDirPath()" in MM and "VCRPrefsValue" in MM)
+# --- 5d. SpringBoard died (safe mode) with no crash report: collect the reason ourselves ---
+check("the tweak catches its own exceptions and fatal signals",
+      has("NSSetUncaughtExceptionHandler(&VCRExceptionHandler)") and has("VCRSignalHandler") and
+      has("tweak fatal signal") and has("TWEAK CRASH"))
+check("signal handlers are installed in the initialiser",
+      has("signal(signals[index], VCRSignalHandler)"))
+# --- 5e. hooks must not be able to take the process down ---
+check("volume hooks run the original first and wrap their own work",
+      order("%orig;", "VCRVolumeButtonEvent(YES, YES)") and has("@catch (NSException *exception)"))
+check("press hooks are wrapped in @try",
+      has("press hook exception") and has("press cancel exception"))
+check("press type 104 is identified from the real press object",
+      has("[press description]"))
 check("camera quality rows and the hold slider are real prefs rows",
       cell_for_key("cameraVideoQuality") is not None and cell_for_key("cameraPhotoQuality") is not None
       and cell_for_key("holdSeconds") is not None and

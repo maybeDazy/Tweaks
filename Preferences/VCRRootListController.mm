@@ -7,7 +7,12 @@
 @import Darwin.POSIX.sys.wait;
 
 static NSString * const VCRPrefsID = @"com.yourname.volumechordrecorder";
-static NSString * const VCRRecordingsDir = @"/var/mobile/Media/VolumeChordRecorder";
+// The tweak picks a folder that really exists and publishes it; /var/mobile/Media does not
+// exist on this device at all, so this must never be hard-coded to that path alone.
+static NSString *VCRRecordingsDirPath(void) {
+    NSString *chosen = VCRPrefsValue(@"vcrRecordingsDir");
+    return chosen.length ? chosen : @"/var/mobile/Media/VolumeChordRecorder";
+}
 
 enum { VCRSliderLabelTag = 9001, VCRSliderControlTag = 9002, VCRSliderValueTag = 9003 };
 
@@ -297,7 +302,7 @@ __attribute__((constructor)) static void VCRPrefsInstallExceptionHandler(void) {
 }
 
 - (NSArray<NSURL *> *)recordingFileURLs {
-    NSURL *dirURL = [NSURL fileURLWithPath:VCRRecordingsDir isDirectory:YES];
+    NSURL *dirURL = [NSURL fileURLWithPath:VCRRecordingsDirPath() isDirectory:YES];
     NSArray<NSURL *> *files = [[NSFileManager defaultManager] contentsOfDirectoryAtURL:dirURL
                                                             includingPropertiesForKeys:@[NSURLCreationDateKey, NSURLFileSizeKey]
                                                                                options:NSDirectoryEnumerationSkipsHiddenFiles
@@ -331,10 +336,10 @@ __attribute__((constructor)) static void VCRPrefsInstallExceptionHandler(void) {
 - (NSString *)recordingsSummaryWithLimit:(NSUInteger)limit {
     NSArray<NSURL *> *files = [self recordingFileURLs];
     if (files.count == 0) {
-        return [NSString stringWithFormat:@"No recordings or photos found.\n\nPath:\n%@", VCRRecordingsDir];
+        return [NSString stringWithFormat:@"No recordings or photos found.\n\nPath:\n%@", VCRRecordingsDirPath()];
     }
 
-    NSMutableString *summary = [NSMutableString stringWithFormat:@"Path:\n%@\n\nTotal: %lu file(s)\n\n", VCRRecordingsDir, (unsigned long)files.count];
+    NSMutableString *summary = [NSMutableString stringWithFormat:@"Path:\n%@\n\nTotal: %lu file(s)\n\n", VCRRecordingsDirPath(), (unsigned long)files.count];
     NSDateFormatter *formatter = [NSDateFormatter new];
     formatter.dateFormat = @"MM-dd HH:mm";
 
@@ -358,7 +363,7 @@ __attribute__((constructor)) static void VCRPrefsInstallExceptionHandler(void) {
 // Open the recordings folder in Filza. Filza's URL scheme is not consistently documented,
 // so try the known forms in order and fall back to showing / copying the path.
 - (void)openRecordingsFolder {
-    NSString *path = VCRRecordingsDir;
+    NSString *path = VCRRecordingsDirPath();
     NSArray<NSString *> *candidates = @[
         [@"filza://view" stringByAppendingString:path],
         [NSString stringWithFormat:@"filza://localhost%@", path],
@@ -387,7 +392,7 @@ __attribute__((constructor)) static void VCRPrefsInstallExceptionHandler(void) {
 }
 
 - (void)showRecordingPath {
-    [self showAlertWithTitle:@"Recording Path" message:[NSString stringWithFormat:@"Saved to:\n%@\n\nUse Filza or SSH/NewTerm to open this folder.", VCRRecordingsDir]];
+    [self showAlertWithTitle:@"Recording Path" message:[NSString stringWithFormat:@"Saved to:\n%@\n\nUse Filza or SSH/NewTerm to open this folder.", VCRRecordingsDirPath()]];
 }
 
 - (void)showRecordingsList {
@@ -432,7 +437,7 @@ __attribute__((constructor)) static void VCRPrefsInstallExceptionHandler(void) {
         return;
     }
     UIAlertController *confirm = [UIAlertController alertControllerWithTitle:@"Delete All Recordings?"
-                                                                     message:[NSString stringWithFormat:@"This will delete %lu media file(s) from:\n%@", (unsigned long)files.count, VCRRecordingsDir]
+                                                                     message:[NSString stringWithFormat:@"This will delete %lu media file(s) from:\n%@", (unsigned long)files.count, VCRRecordingsDirPath()]
                                                               preferredStyle:UIAlertControllerStyleAlert];
     [confirm addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
     [confirm addAction:[UIAlertAction actionWithTitle:@"Delete All" style:UIAlertActionStyleDestructive handler:^(__unused UIAlertAction *action) {
