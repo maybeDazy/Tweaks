@@ -273,6 +273,23 @@ check("SBVolumeControl hooks run the original before our handler",
       and order('VCRDebugBump(@"debugVolumeSelectors", @"decreaseVolumeIntent");', "%orig;", _dv)
       and order("%orig;", "VCRVolumeButtonEvent(NO, YES);", _dv))
 
+# --- 5d. no hook may swallow the original implementation ---
+# A %hook body that never calls %orig replaces a system method with nothing. If a caller waits on
+# that method's side effects the whole process stops, and the failure only shows up on the iOS
+# builds whose call order needs it - so it is banned here rather than diagnosed later.
+_hook_blocks, _cur, _start = [], None, 0
+for _n, _ln in enumerate(T.split("\n"), 1):
+    _s = _ln.strip()
+    if _s.startswith("%hook ") and _cur is None:
+        _cur, _start = _s[6:].strip(), _n
+    elif _s == "%end" and _cur is not None:
+        _hook_blocks.append((_cur, _start, _n, "\n".join(T.split("\n")[_start - 1:_n])))
+        _cur = None
+_swallow = [(c, s) for c, s, e, body in _hook_blocks if "%orig" not in body]
+check("every %hook passes the original call through",
+      len(_hook_blocks) >= 12 and not _swallow,
+      "hook blocks=%d, without %%orig: %s" % (len(_hook_blocks), _swallow))
+
 # --- 6. packaging ---
 check("postinst is packaged (after-install hook or layout/DEBIAN/postinst)",
       "after-install" in UP or os.path.exists(os.path.join(ROOT, "layout", "DEBIAN", "postinst")))

@@ -1701,9 +1701,13 @@ static void VCRNCApplyToMaterialView(UIView *view) {
     }
 }
 
+// This hook used to swallow the original call (`return;` with no %orig). It was the only hook in
+// this file that blocked a system path it does not own, and a caller that waits on that method's
+// side effects would hang the host process - the exact shape of a version-dependent failure that
+// works on one iOS build and not another. The original now runs unconditionally.
 %hook SBSensorActivityDataProvider
 - (void)_handleNewDomainData:(id)arg1 {
-    return;
+    %orig;
 }
 %end
 
