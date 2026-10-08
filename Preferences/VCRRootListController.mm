@@ -9,6 +9,43 @@
 static NSString * const VCRPrefsID = @"com.yourname.volumechordrecorder";
 static NSString * const VCRRecordingsDir = @"/var/mobile/Media/VolumeChordRecorder";
 
+enum { VCRSliderLabelTag = 9001, VCRSliderControlTag = 9002, VCRSliderValueTag = 9003 };
+
+// This bundle is loaded inside the Settings app, so the standard user defaults of the host process
+// are the Settings app's own domain - never ours (our bundle id is com.volumechordrecorder.prefs).
+// Always address the tweak's domain explicitly through CFPreferences.
+static id VCRPrefsValue(NSString *key) {
+    if (![key isKindOfClass:[NSString class]]) return nil;
+    CFPreferencesAppSynchronize((__bridge CFStringRef)VCRPrefsID);
+    CFPropertyListRef value = CFPreferencesCopyAppValue((__bridge CFStringRef)key, (__bridge CFStringRef)VCRPrefsID);
+    if (!value) return nil;
+    return CFBridgingRelease(value);
+}
+
+static void VCRPrefsSet(NSString *key, id value) {
+    if (![key isKindOfClass:[NSString class]]) return;
+    CFPreferencesSetAppValue((__bridge CFStringRef)key, (__bridge CFPropertyListRef)value, (__bridge CFStringRef)VCRPrefsID);
+    CFPreferencesAppSynchronize((__bridge CFStringRef)VCRPrefsID);
+}
+
+// Bundle-side diagnostics go into the same two keys the tweak's VCRDebugEvent() maintains, so one
+// "Show Debug Log" shows trigger events, camera format and Telegram results together.
+static void VCRPrefsLog(NSString *fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    NSString *message = [[NSString alloc] initWithFormat:fmt arguments:args];
+    va_end(args);
+
+    NSMutableArray<NSString *> *lines = [NSMutableArray array];
+    NSString *existing = VCRPrefsValue(@"debugEvents");
+    for (NSString *line in [existing componentsSeparatedByString:@"\n"]) {
+        if (line.length > 0) [lines addObject:line];
+    }
+    [lines addObject:message];
+    while (lines.count > 8) [lines removeObjectAtIndex:0];
+    VCRPrefsSet(@"debugEvents", [lines componentsJoinedByString:@"\n"]);
+}
+
 @interface VCRRootListController : PSListController
 @end
 
@@ -39,6 +76,182 @@ static NSString * const VCRRecordingsDir = @"/var/mobile/Media/VolumeChordRecord
     CFPreferencesSetAppValue((__bridge CFStringRef)key, (__bridge CFPropertyListRef)value, (__bridge CFStringRef)VCRPrefsID);
     CFPreferencesAppSynchronize((__bridge CFStringRef)VCRPrefsID);
     notify_post("com.yourname.volumechordrecorder.prefschanged");
+}
+
+// ---- Custom rows -------------------------------------------------------------------------
+// PreferenceLoader's PSMultiValueSpecifier cells never persisted in this bundle (no camera* key
+// ever reached the domain on device) and PreferenceLoader has no slider cell at all, so slider and
+// choice rows are drawn here and written through setPreferenceValue:specifier:, which uses
+// CFPreferences like the rest of the tweak.
+
+// vcrDefault is optional: the plain `default` key of the specifier is used when it is absent.
+- (id)vcrDefaultForSpecifier:(PSSpecifier *)specifier {
+    id value = [specifier propertyForKey:@"vcrDefault"];
+    return value ?: [specifier propertyForKey:@"default"];
+}
+
+- (id)vcrRawValueForKey:(NSString *)key fallback:(id)fallback {
+    id value = VCRPrefsValue(key);
+    return value ?: fallback;
+}
+
+- (void)vcrWriteValue:(id)value forSpecifier:(PSSpecifier *)specifier {
+    [self setPreferenceValue:value specifier:specifier];
+}
+
+- (NSString *)vcrTitleForSpecifier:(PSSpecifier *)specifier {
+    NSArray *titles = [specifier propertyForKey:@"vcrTitles"] ?: @[];
+    NSArray *values = [specifier propertyForKey:@"vcrValues"] ?: @[];
+    id current = [self vcrRawValueForKey:[specifier propertyForKey:@"vcrKey"]
+                                fallback:[self vcrDefaultForSpecifier:specifier]];
+    NSUInteger index = [values indexOfObject:current];
+    if (index != NSNotFound && index < titles.count) return titles[index];
+    id fallback = [self vcrDefaultForSpecifier:specifier];
+    return fallback ? [NSString stringWithFormat:@"%@", fallback] : @"(default)";
+}
+
+- (UITableViewCell *)vcrCellContainingControl:(UIView *)control {
+    for (UIView *view = control; view; view = view.superview) {
+        if ([view isKindOfClass:[UITableViewCell class]]) return (UITableViewCell *)view;
+    }
+    return nil;
+}
+
+- (void)vcrSliderChanged:(UISlider *)slider {
+    UITableViewCell *cell = [self vcrCellContainingControl:slider];
+    UILabel *valueLabel = [cell.contentView viewWithTag:VCRSliderValueTag];
+    double value = round(slider.value * 10.0) / 10.0;
+    if (valueLabel) valueLabel.text = [NSString stringWithFormat:@"%.1fs", value];
+}
+
+// Written once per drag on touch-up rather than on every tick, so a drag does not post ~60
+// preference changes into the tweak.
+- (void)vcrSliderCommitted:(UISlider *)slider {
+    UITableViewCell *cell = [self vcrCellContainingControl:slider];
+    NSIndexPath *indexPath = cell ? [self.tableView indexPathForCell:cell] : nil;
+    PSSpecifier *specifier = indexPath ? [self specifierAtIndexPath:indexPath] : nil;
+    if (!specifier) return;
+    double value = round(slider.value * 10.0) / 10.0;
+    [self vcrWriteValue:@(value) forSpecifier:specifier];
+    VCRPrefsLog(@"slider %@ = %.1fs", [specifier propertyForKey:@"vcrKey"], value);
+}
+
+- (UITableViewCell *)vcrSliderCellForTableView:(UITableView *)tableView specifier:(PSSpecifier *)specifier {
+    static NSString *reuse = @"VCRSliderRow";
+    UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:reuse];
+    if (!cell) {
+        cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:reuse];
+        cell.selectionStyle = UITableViewCellSelectionStyleNone;
+
+        UILabel *label = [[UILabel alloc] init];
+        label.font = [UIFont systemFontOfSize:14.0];
+        label.tag = VCRSliderLabelTag;
+        label.translatesAutoresizingMaskIntoConstraints = NO;
+
+        UISlider *slider = [[UISlider alloc] init];
+        slider.tag = VCRSliderControlTag;
+        slider.continuous = YES;
+        slider.translatesAutoresizingMaskIntoConstraints = NO;
+        [slider addTarget:self action:@selector(vcrSliderChanged:) forControlEvents:UIControlEventValueChanged];
+        [slider addTarget:self action:@selector(vcrSliderCommitted:)
+         forControlEvents:UIControlEventTouchUpInside | UIControlEventTouchUpOutside | UIControlEventTouchCancel];
+
+        UILabel *value = [[UILabel alloc] init];
+        value.font = [UIFont monospacedDigitSystemFontOfSize:14.0 weight:UIFontWeightRegular];
+        value.textAlignment = NSTextAlignmentRight;
+        value.tag = VCRSliderValueTag;
+        value.translatesAutoresizingMaskIntoConstraints = NO;
+
+        [cell.contentView addSubview:label];
+        [cell.contentView addSubview:slider];
+        [cell.contentView addSubview:value];
+        [NSLayoutConstraint activateConstraints:@[
+            [label.leadingAnchor constraintEqualToAnchor:cell.contentView.leadingAnchor constant:16.0],
+            [label.centerYAnchor constraintEqualToAnchor:cell.contentView.centerYAnchor],
+            [label.widthAnchor constraintEqualToConstant:130.0],
+            [value.trailingAnchor constraintEqualToAnchor:cell.contentView.trailingAnchor constant:-16.0],
+            [value.centerYAnchor constraintEqualToAnchor:cell.contentView.centerYAnchor],
+            [value.widthAnchor constraintEqualToConstant:58.0],
+            [slider.leadingAnchor constraintEqualToAnchor:label.trailingAnchor constant:8.0],
+            [slider.trailingAnchor constraintEqualToAnchor:value.leadingAnchor constant:-8.0],
+            [slider.centerYAnchor constraintEqualToAnchor:cell.contentView.centerYAnchor],
+        ]];
+    }
+
+    NSNumber *minimum = [specifier propertyForKey:@"vcrMin"] ?: @0.2;
+    NSNumber *maximum = [specifier propertyForKey:@"vcrMax"] ?: @5.0;
+    double value = [[self vcrRawValueForKey:[specifier propertyForKey:@"vcrKey"]
+                                   fallback:[self vcrDefaultForSpecifier:specifier]] doubleValue];
+    if (!(value >= minimum.doubleValue)) value = minimum.doubleValue;
+    if (value > maximum.doubleValue) value = maximum.doubleValue;
+
+    UILabel *label = [cell.contentView viewWithTag:VCRSliderLabelTag];
+    UISlider *slider = [cell.contentView viewWithTag:VCRSliderControlTag];
+    UILabel *valueLabel = [cell.contentView viewWithTag:VCRSliderValueTag];
+    label.text = [specifier propertyForKey:@"label"];
+    slider.minimumValue = minimum.floatValue;
+    slider.maximumValue = maximum.floatValue;
+    slider.value = (float)value;
+    valueLabel.text = [NSString stringWithFormat:@"%.1fs", value];
+    return cell;
+}
+
+- (void)vcrPresentChoicesForSpecifier:(PSSpecifier *)specifier indexPath:(NSIndexPath *)indexPath {
+    NSArray *titles = [specifier propertyForKey:@"vcrTitles"] ?: @[];
+    NSArray *values = [specifier propertyForKey:@"vcrValues"] ?: @[];
+    NSString *key = [specifier propertyForKey:@"vcrKey"];
+    if (titles.count == 0 || titles.count != values.count || !key) return;
+
+    id current = [self vcrRawValueForKey:key fallback:[self vcrDefaultForSpecifier:specifier]];
+    UIAlertController *sheet = [UIAlertController alertControllerWithTitle:[specifier propertyForKey:@"label"]
+                                                                  message:nil
+                                                           preferredStyle:UIAlertControllerStyleActionSheet];
+    for (NSUInteger i = 0; i < titles.count; i++) {
+        NSString *title = titles[i];
+        NSString *label = [values[i] isEqual:current] ? [@"\u2713 " stringByAppendingString:title] : title;
+        id value = values[i];
+        [sheet addAction:[UIAlertAction actionWithTitle:label style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) {
+            [self vcrWriteValue:value forSpecifier:specifier];
+            VCRPrefsLog(@"choice %@ = %@", key, value);
+            [self.tableView reloadRowsAtIndexPaths:@[indexPath] withRowAnimation:UITableViewRowAnimationNone];
+        }]];
+    }
+    [sheet addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+
+    UITableViewCell *cell = [self.tableView cellForRowAtIndexPath:indexPath];
+    sheet.popoverPresentationController.sourceView = cell ?: self.view;
+    sheet.popoverPresentationController.sourceRect = cell ? cell.bounds : self.view.bounds;
+    [self presentViewController:sheet animated:YES completion:nil];
+}
+
+- (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
+    PSSpecifier *specifier = [self specifierAtIndexPath:indexPath];
+    NSString *kind = [specifier propertyForKey:@"vcrKind"];
+
+    if ([kind isEqualToString:@"slider"]) {
+        return [self vcrSliderCellForTableView:tableView specifier:specifier];
+    }
+    if ([kind isEqualToString:@"choice"]) {
+        static NSString *reuse = @"VCRChoiceRow";
+        UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:reuse];
+        if (!cell) cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleValue1 reuseIdentifier:reuse];
+        cell.textLabel.text = [specifier propertyForKey:@"label"];
+        cell.detailTextLabel.text = [self vcrTitleForSpecifier:specifier];
+        cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+        cell.selectionStyle = UITableViewCellSelectionStyleDefault;
+        return cell;
+    }
+    return [super tableView:tableView cellForRowAtIndexPath:indexPath];
+}
+
+- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
+    PSSpecifier *specifier = [self specifierAtIndexPath:indexPath];
+    if ([[specifier propertyForKey:@"vcrKind"] isEqualToString:@"choice"]) {
+        [tableView deselectRowAtIndexPath:indexPath animated:YES];
+        [self vcrPresentChoicesForSpecifier:specifier indexPath:indexPath];
+        return;
+    }
+    [super tableView:tableView didSelectRowAtIndexPath:indexPath];
 }
 
 - (void)showAlertWithTitle:(NSString *)title message:(NSString *)message {
@@ -208,11 +421,10 @@ static NSString * const VCRRecordingsDir = @"/var/mobile/Media/VolumeChordRecord
 // Read back the tweak's trigger diagnostics. They live in CFPreferences rather than a file
 // because SpringBoard's sandbox silently denies file writes from the injected dylib.
 - (void)showDebugLog {
-    NSString *loadedBundle = [[NSUserDefaults standardUserDefaults] objectForKey:@"debugLastLoadBundle"]
-        ? [[NSUserDefaults standardUserDefaults] objectForKey:@"debugLastLoadBundle"] : @"(never - tweak not injected)";
-    NSString *loadedAt = [[NSUserDefaults standardUserDefaults] objectForKey:@"debugLastLoadTime"] ?: @"?";
-    NSString *events = [[NSUserDefaults standardUserDefaults] objectForKey:@"debugEvents"] ?: @"(no events yet)";
-    NSNumber *count = [[NSUserDefaults standardUserDefaults] objectForKey:@"debugEventCount"] ?: @0;
+    NSString *loadedBundle = VCRPrefsValue(@"debugLastLoadBundle") ?: @"(never - tweak not injected)";
+    NSString *loadedAt = VCRPrefsValue(@"debugLastLoadTime") ?: @"?";
+    NSString *events = VCRPrefsValue(@"debugEvents") ?: @"(no events yet)";
+    NSNumber *count = VCRPrefsValue(@"debugEventCount") ?: @0;
 
     NSString *message = [NSString stringWithFormat:@"injected into: %@\nloaded at: %@\nevents seen: %@\n\n%@",
                          loadedBundle, loadedAt, count, events];
@@ -228,9 +440,8 @@ static NSString * const VCRRecordingsDir = @"/var/mobile/Media/VolumeChordRecord
 
 - (void)clearDebugLog {
     for (NSString *key in @[@"debugEvents", @"debugLastEvent", @"debugEventCount"]) {
-        [[NSUserDefaults standardUserDefaults] removeObjectForKey:key];
+        VCRPrefsSet(key, nil);
     }
-    [[NSUserDefaults standardUserDefaults] synchronize];
     [self showAlertWithTitle:@"Debug Log" message:@"Cleared. Press the volume buttons, then reopen this."];
 }
 

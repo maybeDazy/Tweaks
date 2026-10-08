@@ -82,19 +82,21 @@
 		</dict>
 		<dict>
 			<key>cell</key>
-			<string>PSEditTextCell</string>
-			<key>keyboard</key>
-			<string>decimal</string>
+			<string>PSLinkCell</string>
 			<key>label</key>
 			<string>Hold Seconds</string>
+			<key>vcrKind</key>
+			<string>slider</string>
 			<key>key</key>
 			<string>holdSeconds</string>
-			<key>default</key>
+			<key>vcrKey</key>
+			<string>holdSeconds</string>
+			<key>vcrDefault</key>
 			<real>2.0</real>
-			<key>defaults</key>
-			<string>com.yourname.volumechordrecorder</string>
-			<key>PostNotification</key>
-			<string>com.yourname.volumechordrecorder.prefschanged</string>
+			<key>vcrMin</key>
+			<real>0.2</real>
+			<key>vcrMax</key>
+			<real>5.0</real>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -156,22 +158,26 @@
 		</dict>
 		<dict>
 			<key>cell</key>
-			<string>PSMultiValueSpecifier</string>
+			<string>PSLinkCell</string>
 			<key>label</key>
 			<string>Haptic Strength</string>
+			<key>vcrKind</key>
+			<string>choice</string>
 			<key>key</key>
+			<string>hapticStrength</string>
+			<key>vcrKey</key>
 			<string>hapticStrength</string>
 			<key>defaults</key>
 			<string>com.yourname.volumechordrecorder</string>
 			<key>default</key>
 			<string>medium</string>
-			<key>titles</key>
+			<key>vcrTitles</key>
 			<array>
 				<string>Light</string>
 				<string>Medium</string>
 				<string>Strong</string>
 			</array>
-			<key>values</key>
+			<key>vcrValues</key>
 			<array>
 				<string>light</string>
 				<string>medium</string>
@@ -276,21 +282,25 @@
 		</dict>
 		<dict>
 			<key>cell</key>
-			<string>PSMultiValueSpecifier</string>
+			<string>PSLinkCell</string>
 			<key>label</key>
 			<string>Camera (Front/Back)</string>
+			<key>vcrKind</key>
+			<string>choice</string>
 			<key>key</key>
+			<string>cameraPosition</string>
+			<key>vcrKey</key>
 			<string>cameraPosition</string>
 			<key>defaults</key>
 			<string>com.yourname.volumechordrecorder</string>
 			<key>default</key>
 			<string>back</string>
-			<key>titles</key>
+			<key>vcrTitles</key>
 			<array>
 				<string>Back</string>
 				<string>Front</string>
 			</array>
-			<key>values</key>
+			<key>vcrValues</key>
 			<array>
 				<string>back</string>
 				<string>front</string>
@@ -300,21 +310,25 @@
 		</dict>
 		<dict>
 			<key>cell</key>
-			<string>PSMultiValueSpecifier</string>
+			<string>PSLinkCell</string>
 			<key>label</key>
 			<string>Lens (back camera)</string>
+			<key>vcrKind</key>
+			<string>choice</string>
 			<key>key</key>
+			<string>cameraLens</string>
+			<key>vcrKey</key>
 			<string>cameraLens</string>
 			<key>defaults</key>
 			<string>com.yourname.volumechordrecorder</string>
 			<key>default</key>
 			<string>wide</string>
-			<key>titles</key>
+			<key>vcrTitles</key>
 			<array>
 				<string>1x (Wide)</string>
 				<string>0.5x (Ultra Wide)</string>
 			</array>
-			<key>values</key>
+			<key>vcrValues</key>
 			<array>
 				<string>wide</string>
 				<string>ultrawide</string>
@@ -324,16 +338,20 @@
 		</dict>
 		<dict>
 			<key>cell</key>
-			<string>PSMultiValueSpecifier</string>
+			<string>PSLinkCell</string>
 			<key>label</key>
 			<string>Video Quality</string>
+			<key>vcrKind</key>
+			<string>choice</string>
 			<key>key</key>
+			<string>cameraVideoQuality</string>
+			<key>vcrKey</key>
 			<string>cameraVideoQuality</string>
 			<key>defaults</key>
 			<string>com.yourname.volumechordrecorder</string>
 			<key>default</key>
 			<string>1080p30</string>
-			<key>titles</key>
+			<key>vcrTitles</key>
 			<array>
 				<string>720p HD · 30 fps</string>
 				<string>1080p HD · 30 fps</string>
@@ -342,7 +360,7 @@
 				<string>4K · 60 fps</string>
 				<string>High (automatic)</string>
 			</array>
-			<key>values</key>
+			<key>vcrValues</key>
 			<array>
 				<string>720p30</string>
 				<string>1080p30</string>
@@ -356,22 +374,26 @@
 		</dict>
 		<dict>
 			<key>cell</key>
-			<string>PSMultiValueSpecifier</string>
+			<string>PSLinkCell</string>
 			<key>label</key>
 			<string>Photo Quality</string>
+			<key>vcrKind</key>
+			<string>choice</string>
 			<key>key</key>
+			<string>cameraPhotoQuality</string>
+			<key>vcrKey</key>
 			<string>cameraPhotoQuality</string>
 			<key>defaults</key>
 			<string>com.yourname.volumechordrecorder</string>
 			<key>default</key>
 			<string>quality</string>
-			<key>titles</key>
+			<key>vcrTitles</key>
 			<array>
 				<string>Prioritize Speed</string>
 				<string>Balanced</string>
 				<string>Best Quality</string>
 			</array>
-			<key>values</key>
+			<key>vcrValues</key>
 			<array>
 				<string>speed</string>
 				<string>balanced</string>

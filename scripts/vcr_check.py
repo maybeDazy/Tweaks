@@ -83,7 +83,7 @@ check("holdSeconds is no longer a text cell", c and c.get("cell") != "PSEditText
 
 # --- 3. choice rows ---
 for key, want in [("cameraVideoQuality", 6), ("cameraPhotoQuality", 3),
-                  ("cameraPosition", 2), ("cameraLens", 2)]:
+                  ("cameraPosition", 2), ("cameraLens", 2), ("hapticStrength", 3)]:
     c = cell_for_key(key)
     check("choice row %s present with %d titles" % (key, want),
           c and c.get("vcrKind") == "choice" and len(c.get("vcrTitles", [])) == want
