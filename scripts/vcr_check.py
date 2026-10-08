@@ -180,6 +180,14 @@ check("the captures directory is chosen at runtime, not hard-coded",
 check("the preferences bundle follows the directory the tweak published",
       "VCRRecordingsDirPath()" in MM and "VCRPrefsValue" in MM)
 # --- 5d. SpringBoard died (safe mode) with no crash report: collect the reason ourselves ---
+# The device went into safe mode because AVFoundation raised, and the exception escaped to kill
+# SpringBoard: the requested photo prioritisation must never exceed what the output allows.
+check("photo prioritisation is clamped to what the output allows",
+      has("MIN(VCRCameraPhotoQualityValue(), vcrPhotoOutput.maxPhotoQualityPrioritization)"))
+check("the photo capability is raised when the output is created",
+      has("maxPhotoQualityPrioritization = AVCapturePhotoQualityPrioritizationQuality"))
+check("photo and video capture cannot let an exception escape",
+      has("Camera photo exception") and has("Camera video exception"))
 check("the tweak catches its own exceptions and fatal signals",
       has("NSSetUncaughtExceptionHandler(&VCRExceptionHandler)") and has("VCRSignalHandler") and
       has("tweak fatal signal") and has("TWEAK CRASH"))

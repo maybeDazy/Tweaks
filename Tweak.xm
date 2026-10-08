@@ -638,6 +638,14 @@ static void VCRCameraEnsureSession(void) {
     if (!vcrCaptureQueue) vcrCaptureQueue = dispatch_queue_create("com.yourname.volumechordrecorder.camera", DISPATCH_QUEUE_SERIAL);
     vcrCaptureSession = [[AVCaptureSession alloc] init];
     vcrPhotoOutput = [[AVCapturePhotoOutput alloc] init];
+    // Raise the ceiling that capture requests are clamped against. AVFoundation raises an
+    // NSInvalidArgumentException when a capture asks for more prioritisation than the output allows,
+    // and that exception terminated SpringBoard - which is what put the device into safe mode.
+    @try {
+        vcrPhotoOutput.maxPhotoQualityPrioritization = AVCapturePhotoQualityPrioritizationQuality;
+    } @catch (NSException *exception) {
+        VCRLog(@"Camera: photo output refused the prioritisation cap: %@", exception.reason);
+    }
     vcrMovieOutput = [[AVCaptureMovieFileOutput alloc] init];
     VCRLog(@"Camera: session object created");
 }
@@ -894,12 +902,24 @@ static void VCRTakePhoto(void) {
 
     VCRHapticStart();
     AVCapturePhotoSettings *settings = [AVCapturePhotoSettings photoSettings];
-    settings.photoQualityPrioritization = VCRCameraPhotoQualityValue();
+    // Never ask for more than the output allows. Asking for more raises
+    // "settings.photoQualityPrioritization must not be higher than self.maxPhotoQualityPrioritization",
+    // and that exception used to take SpringBoard down with it.
+    settings.photoQualityPrioritization = MIN(VCRCameraPhotoQualityValue(), vcrPhotoOutput.maxPhotoQualityPrioritization);
     VCRPhotoCaptureDelegate *delegate = [VCRPhotoCaptureDelegate new];
     dispatch_async(vcrCaptureQueue, ^{
-        if (VCRCameraPrepareSession(NO)) {
-            VCRCameraStartRunningSync();
-            [vcrPhotoOutput capturePhotoWithSettings:settings delegate:delegate];
+        @try {
+            if (VCRCameraPrepareSession(NO)) {
+                VCRCameraStartRunningSync();
+                [vcrPhotoOutput capturePhotoWithSettings:settings delegate:delegate];
+            }
+        } @catch (NSException *exception) {
+            vcrCameraRecording = NO;
+            VCRLog(@"Camera photo exception: %@", exception.reason);
+            VCRDebugEvent([NSString stringWithFormat:@"camera photo exception: %@", exception.reason]);
+            dispatch_async(dispatch_get_main_queue(), ^{
+                VCRShowNotification(@"VolumeChordRecorder", @"Photo failed");
+            });
         }
     });
     VCRLog(@"Camera photo triggered");
@@ -929,17 +949,29 @@ static void VCRStartVideoRecording(void) {
     VCRMovieRecordingDelegate *delegate = [VCRMovieRecordingDelegate new];
     vcrCameraRecording = YES;
     dispatch_async(vcrCaptureQueue, ^{
-        if (VCRCameraPrepareSession(YES)) {
-            VCRCameraStartRunningSync();
-            [vcrMovieOutput startRecordingToOutputFileURL:tempURL recordingDelegate:delegate];
-            dispatch_async(dispatch_get_main_queue(), ^{
-                VCRLog(@"Camera video recording started -> %@", path);
-                VCRShowNotification(@"VolumeChordRecorder", @"REC");
-            });
-        } else {
+        @try {
+            if (VCRCameraPrepareSession(YES)) {
+                VCRCameraStartRunningSync();
+                [vcrMovieOutput startRecordingToOutputFileURL:tempURL recordingDelegate:delegate];
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    VCRLog(@"Camera video recording started -> %@", path);
+                    VCRShowNotification(@"VolumeChordRecorder", @"REC");
+                });
+            } else {
+                vcrCameraRecording = NO;
+                if (vcrMaxVideoTimer) { [vcrMaxVideoTimer invalidate]; vcrMaxVideoTimer = nil; }
+                VCRLog(@"Camera: video prepare failed, aborted");
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    VCRShowNotification(@"VolumeChordRecorder", @"Video failed");
+                });
+            }
+        } @catch (NSException *exception) {
+            // Same class of AVFoundation exception as the photo path: never let it escape, or the
+            // host process (SpringBoard) dies and the device drops into safe mode.
             vcrCameraRecording = NO;
             if (vcrMaxVideoTimer) { [vcrMaxVideoTimer invalidate]; vcrMaxVideoTimer = nil; }
-            VCRLog(@"Camera: video prepare failed, aborted");
+            VCRLog(@"Camera video exception: %@", exception.reason);
+            VCRDebugEvent([NSString stringWithFormat:@"camera video exception: %@", exception.reason]);
             dispatch_async(dispatch_get_main_queue(), ^{
                 VCRShowNotification(@"VolumeChordRecorder", @"Video failed");
             });
