@@ -132,8 +132,10 @@ static void VCRLog(NSString *fmt, ...) {
     NSLog(@"%@ %@", VCRPrefix, msg);
     VCRAppendLogLine(msg);
     // SpringBoard's sandbox denies the file above, so the only place these lines can actually be
-    // read back is the preferences ring that "Show Debug Log" prints.
-    VCRDebugEvent(msg);
+    // read back is the preferences ring that "Show Debug Log" prints. The notification-center view
+    // hooks fire for every touched view (hundreds of lines a minute), which would both drown the
+    // ring and turn every one of them into a preferences write, so keep those out of the ring.
+    if (![msg hasPrefix:@"NC transparency"]) VCRDebugEvent(msg);
 }
 
 // Diagnostic recorder for trigger plumbing. File writes are silently denied by SpringBoard's
@@ -173,7 +175,7 @@ static void VCRDebugEvent(NSString *msg) {
         if (existing.length > 0) [lines addObject:existing];
     }
     [lines addObject:line];
-    while (lines.count > 8) [lines removeObjectAtIndex:0];
+    while (lines.count > 14) [lines removeObjectAtIndex:0];
     CFPreferencesSetAppValue(CFSTR("debugEvents"), (__bridge CFStringRef)[lines componentsJoinedByString:@"\n"], domain);
     CFPreferencesAppSynchronize(domain);
 }
