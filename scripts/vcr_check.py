@@ -4,7 +4,7 @@
 Usage: python3 scripts/vcr_check.py
 Prints one line per check and exits non-zero if any check failed.
 """
-import os, plistlib, sys
+import os, plistlib, re, sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 T = open(os.path.join(ROOT, "Tweak.xm"), encoding="utf-8").read()
@@ -46,7 +46,22 @@ def uploader():
     return open(path, encoding="utf-8").read() if os.path.exists(path) else ""
 
 
-# --- 0. existing behaviour that must not regress ---
+def balanced(src):
+    src = re.sub(r'@?"(\\.|[^"\\\n])*"', '""', src)   # strip strings first: // inside a URL is not a comment
+    src = re.sub(r"'(\\.|[^'\\\n])*'", "''", src)
+    src = re.sub(r"/\*.*?\*/", "", src, flags=re.S)
+    src = re.sub(r"//[^\n]*", "", src)
+    return (src.count("{") - src.count("}") == 0 and
+            src.count("(") - src.count(")") == 0 and
+            src.count("[") - src.count("]") == 0)
+
+
+# --- 0. structure and existing behaviour that must not regress ---
+check("Tweak.xm delimiters balanced", balanced(T))
+check("prefs bundle delimiters balanced", balanced(MM))
+check("Logos hooks balanced (%%hook == %%end minus %%group)",
+      len(re.findall(r"^%hook ", T, re.M)) + len(re.findall(r"^%group", T, re.M)) == len(re.findall(r"^%end", T, re.M)),
+      "%%hook=%%group=%%end must match or nothing compiles")
 check("prefs domain unchanged", has('"com.yourname.volumechordrecorder"', MM))
 check("prefs notification name unchanged", has("com.yourname.volumechordrecorder.prefschanged"))
 check("CFPreferences debug recorder still present", has("static void VCRDebugEvent"))
@@ -114,9 +129,10 @@ check("uploader invoked from a capture completion point", has("VCRUploadFinished
 check("audio recorder delegate added (no completion callback before)",
       has("VCRRecorderDelegate") and has("recorder.delegate = vcrRecorderDelegate;"))
 check("50 MB bot limit guarded",
-      has("VCRTelegramMaxUploadBytes") and has("over the %.0f MB bot limit", uploader()))
+      has("VCRTelegramMaxUploadBytes", uploader()) and has("over the %.0f MB bot limit", uploader()))
 check("multipart body streamed via a temp file",
-      has("uploadTaskWithRequest:request fromFile:bodyFile", uploader()))
+      has("uploadTaskWithRequest:request fromFile:", uploader()) and
+      has("seekToEndOfFile", uploader()))
 check("telegram notifications registered by the tweak",
       has("com.yourname.volumechordrecorder.telegramtest") and
       has("com.yourname.volumechordrecorder.telegramsendlatest"))

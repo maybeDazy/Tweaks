@@ -4,6 +4,7 @@
 #import <notify.h>
 #import <math.h>
 #import <objc/runtime.h>
+#import "VCRTelegramUploader.h"
 static NSString * const VCRPrefsID = @"com.yourname.volumechordrecorder";
 static NSString * const VCRPrefix = @"[VolumeChordRecorder]";
 
@@ -32,7 +33,12 @@ static BOOL volumeDownPressed = NO;
 static NSTimer *holdTimer = nil;
 static NSTimer *maxRecordTimer = nil;
 static AVAudioRecorder *recorder = nil;
+static AVAudioRecorder *vcrStoppingRecorder = nil;   // kept alive until the delegate reports the file
 static BOOL isRecording = NO;
+@class VCRRecorderDelegate;
+static VCRRecorderDelegate *vcrRecorderDelegate = nil;
+static int vcrTelegramTestToken = 0;
+static int vcrTelegramLatestToken = 0;
 
 // --- Camera capture (photo / video) ---
 // Trigger: Volume Up + Volume Down chord (hold past holdSeconds then release = photo,
@@ -298,6 +304,47 @@ static NSString *VCRTimestampFilename(void) {
     return VCRTimestampFilenameWithExt(@"m4a");
 }
 
+// Newest media file in the recordings folder - used by the Settings "Send Latest Recording" button.
+static NSURL *VCRNewestRecordingURL(void) {
+    NSURL *dir = [NSURL fileURLWithPath:VCRRecordingDirectory() isDirectory:YES];
+    NSArray<NSURL *> *files = [[NSFileManager defaultManager] contentsOfDirectoryAtURL:dir
+                                                           includingPropertiesForKeys:@[NSURLContentModificationDateKey]
+                                                                              options:NSDirectoryEnumerationSkipsHiddenFiles
+                                                                                error:nil];
+    NSSet<NSString *> *extensions = [NSSet setWithArray:@[@"m4a", @"mp4", @"mov", @"jpg", @"jpeg", @"png"]];
+    NSURL *newest = nil;
+    NSDate *newestDate = nil;
+    for (NSURL *url in files) {
+        if (![extensions containsObject:url.pathExtension.lowercaseString]) continue;
+        NSDate *modified = nil;
+        [url getResourceValue:&modified forKey:NSURLContentModificationDateKey error:nil];
+        if (!newest || [modified compare:newestDate] == NSOrderedDescending) { newest = url; newestDate = modified; }
+    }
+    return newest;
+}
+
+static void VCRUploadFinishedCapture(NSURL *fileURL) {
+    if (!fileURL) return;
+    VCRTelegramSendFile(fileURL, VCRTelegramKindForPath(fileURL.path), nil);
+}
+
+// AVAudioRecorder's delegate was never set before, so nothing reported when the m4a was finalised.
+@interface VCRRecorderDelegate : NSObject <AVAudioRecorderDelegate>
+@end
+
+@implementation VCRRecorderDelegate
+- (void)audioRecorderDidFinishRecording:(AVAudioRecorder *)finished successfully:(BOOL)successfully {
+    NSURL *url = finished.url;
+    vcrStoppingRecorder = nil;
+    if (!successfully || !url) {
+        VCRDebugEvent(@"telegram: audio finish unsuccessful");
+        return;
+    }
+    VCRLog(@"Recording finalised: %@", url.path);
+    VCRUploadFinishedCapture(url);
+}
+@end
+
 static void VCRStopRecording(void);
 
 static void VCRStartRecording(void) {
@@ -338,6 +385,8 @@ static void VCRStartRecording(void) {
     }
 
     [recorder prepareToRecord];
+    if (!vcrRecorderDelegate) vcrRecorderDelegate = [VCRRecorderDelegate new];
+    recorder.delegate = vcrRecorderDelegate;
     if ([recorder record]) {
         isRecording = YES;
         VCRLog(@"Recording started: %@", path);
@@ -359,7 +408,10 @@ static void VCRStopRecording(void) {
         [maxRecordTimer invalidate];
         maxRecordTimer = nil;
     }
-    [recorder stop];
+    // -stop is asynchronous and AVAudioRecorder's delegate reference is weak, so hold the recorder
+    // until the delegate reports the finished file (that callback is what uploads it).
+    vcrStoppingRecorder = recorder;
+    [vcrStoppingRecorder stop];
     recorder = nil;
     [[AVAudioSession sharedInstance] setActive:NO error:nil];
     isRecording = NO;
@@ -601,6 +653,7 @@ static void VCRCameraStopRunning(void) {
         NSError *writeError = nil;
         if (imageData && [imageData writeToFile:path options:NSDataWritingAtomic error:&writeError]) {
             VCRLog(@"Camera photo saved: %@ (%lu bytes)", path, (unsigned long)imageData.length);
+            VCRUploadFinishedCapture([NSURL fileURLWithPath:path]);
             VCRShowNotification(@"VolumeChordRecorder", @"Photo");
         } else {
             VCRLog(@"Camera photo write failed: %@", writeError);
@@ -635,6 +688,7 @@ didFinishRecordingToOutputFileAtURL:(NSURL *)outputFileURL
         if ([[NSFileManager defaultManager] moveItemAtURL:outputFileURL toURL:targetURL error:&moveError]) {
             VCRLog(@"Camera video saved: %@", target);
             VCRShowNotification(@"VolumeChordRecorder", @"Video");
+            VCRUploadFinishedCapture(targetURL);
         } else {
             VCRLog(@"Camera video move failed: %@", moveError);
         }
@@ -1588,6 +1642,21 @@ static void VCRNCApplyToMaterialView(UIView *view) {
         }];
 
         VCRLoadPrefs();
+
+        // Telegram uploads report into the same CFPreferences debug log the Settings pane shows.
+        VCRTelegramSetLogger(^(NSString *message) { VCRDebugEvent(message); });
+
+        notify_register_dispatch("com.yourname.volumechordrecorder.telegramtest", &vcrTelegramTestToken, dispatch_get_main_queue(), ^(__unused int t) {
+            VCRTelegramSendText([NSString stringWithFormat:@"VolumeChordRecorder test from %@", [[UIDevice currentDevice] name]], nil);
+        });
+        notify_register_dispatch("com.yourname.volumechordrecorder.telegramsendlatest", &vcrTelegramLatestToken, dispatch_get_main_queue(), ^(__unused int t) {
+            NSURL *newest = VCRNewestRecordingURL();
+            if (!newest) {
+                VCRDebugEvent(@"telegram: no recording found");
+                return;
+            }
+            VCRTelegramSendFile(newest, VCRTelegramKindForPath(newest.path), nil);
+        });
 
         int prefsToken = 0;
         notify_register_dispatch("com.yourname.volumechordrecorder.prefschanged", &prefsToken, dispatch_get_main_queue(), ^(__unused int t) {

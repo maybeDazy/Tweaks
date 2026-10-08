@@ -9,7 +9,7 @@ INSTALL_TARGET_PROCESSES = SpringBoard Preferences
 include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME = VolumeChordRecorder
-VolumeChordRecorder_FILES = Tweak.xm
+VolumeChordRecorder_FILES = Tweak.xm VCRTelegramUploader.m
 VolumeChordRecorder_CFLAGS = -fobjc-arc
 VolumeChordRecorder_FRAMEWORKS = UIKit AVFoundation AudioToolbox
 

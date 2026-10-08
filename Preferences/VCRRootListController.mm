@@ -445,6 +445,20 @@ static void VCRPrefsLog(NSString *fmt, ...) {
     [self showAlertWithTitle:@"Debug Log" message:@"Cleared. Press the volume buttons, then reopen this."];
 }
 
+// The uploader lives in the tweak (SpringBoard), not in this bundle, so these buttons ask it to
+// run - which also exercises the real code path instead of a copy of it.
+- (void)sendTelegramTest {
+    notify_post("com.yourname.volumechordrecorder.telegramtest");
+    [self showAlertWithTitle:@"Telegram"
+                     message:@"Test requested. Open \"Show Debug Log\" in a few seconds: it reports sendMessage ok, or the API error (401 = bad token, 400 = bad chat id)."];
+}
+
+- (void)sendTelegramLatest {
+    notify_post("com.yourname.volumechordrecorder.telegramsendlatest");
+    [self showAlertWithTitle:@"Telegram"
+                     message:@"Uploading the newest recording. See \"Show Debug Log\" for the result."];
+}
+
 - (void)testHaptic {
     AudioServicesPlaySystemSound(1519);
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.12 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{

@@ -592,6 +592,116 @@
 			<key>action</key>
 			<string>respring</string>
 		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>Telegram Upload</string>
+			<key>footerText</key>
+			<string>Bot API uploads are capped at 50 MB, so 4K/60 clips are skipped and noted in the debug log. The token is stored in this preferences file in plain text. Both buttons run the uploader inside SpringBoard and report into "Show Debug Log".</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>label</key>
+			<string>Upload Finished Captures</string>
+			<key>key</key>
+			<string>telegramEnabled</string>
+			<key>default</key>
+			<false/>
+			<key>defaults</key>
+			<string>com.yourname.volumechordrecorder</string>
+			<key>PostNotification</key>
+			<string>com.yourname.volumechordrecorder.prefschanged</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSEditTextCell</string>
+			<key>label</key>
+			<string>Bot Token</string>
+			<key>key</key>
+			<string>telegramBotToken</string>
+			<key>default</key>
+			<string></string>
+			<key>defaults</key>
+			<string>com.yourname.volumechordrecorder</string>
+			<key>PostNotification</key>
+			<string>com.yourname.volumechordrecorder.prefschanged</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSEditTextCell</string>
+			<key>keyboard</key>
+			<string>numbersAndPunctuation</string>
+			<key>label</key>
+			<string>Chat ID</string>
+			<key>key</key>
+			<string>telegramChatID</string>
+			<key>default</key>
+			<string></string>
+			<key>defaults</key>
+			<string>com.yourname.volumechordrecorder</string>
+			<key>PostNotification</key>
+			<string>com.yourname.volumechordrecorder.prefschanged</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>label</key>
+			<string>Send Audio Recordings</string>
+			<key>key</key>
+			<string>telegramSendAudio</string>
+			<key>default</key>
+			<true/>
+			<key>defaults</key>
+			<string>com.yourname.volumechordrecorder</string>
+			<key>PostNotification</key>
+			<string>com.yourname.volumechordrecorder.prefschanged</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>label</key>
+			<string>Send Videos</string>
+			<key>key</key>
+			<string>telegramSendVideo</string>
+			<key>default</key>
+			<true/>
+			<key>defaults</key>
+			<string>com.yourname.volumechordrecorder</string>
+			<key>PostNotification</key>
+			<string>com.yourname.volumechordrecorder.prefschanged</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>label</key>
+			<string>Send Photos</string>
+			<key>key</key>
+			<string>telegramSendPhoto</string>
+			<key>default</key>
+			<false/>
+			<key>defaults</key>
+			<string>com.yourname.volumechordrecorder</string>
+			<key>PostNotification</key>
+			<string>com.yourname.volumechordrecorder.prefschanged</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>Send Test (uses SpringBoard)</string>
+			<key>action</key>
+			<string>sendTelegramTest</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>Send Latest Recording</string>
+			<key>action</key>
+			<string>sendTelegramLatest</string>
+		</dict>
 	</array>
 </dict>
 </plist>

@@ -1,0 +1,9 @@
+#!/bin/sh
+# Remove the legacy PreferenceLoader registration filename left by older test builds.
+rm -f /Library/PreferenceLoader/Preferences/VolumeChordRecorder.plist 2>/dev/null || true
+
+# Restart SpringBoard so the new dylib takes effect immediately. Without this, installing a new
+# build silently keeps the old one running and "did it even reload?" becomes unanswerable.
+killall -9 SpringBoard 2>/dev/null || true
+
+exit 0
