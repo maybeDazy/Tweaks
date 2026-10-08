@@ -1963,27 +1963,30 @@ static void VCRVolumeButtonEvent(BOOL isIncrease, BOOL isDown) {
 
 // Every selector counts itself into a dedicated key before %orig runs, so a cumulative tally
 // survives the 14-line ring: that is how "which of the four ever fires" gets answered for good.
+// %orig is deliberately NOT wrapped in @try/@catch: Logos refuses to compile %orig inside an ObjC
+// exception block ("@try statement without a @catch and @finally clause"), and everything of ours is
+// already deferred and guarded inside VCRVolumeButtonEvent().
 - (void)volumeIncreasePressDownWithModifiers:(id)modifiers {
     VCRDebugBump(@"debugVolumeSelectors", @"increaseDown");
-    @try { %orig; } @catch (NSException *exception) { VCRDebugEvent([NSString stringWithFormat:@"orig increaseDown threw: %@", exception.reason]); }
+    %orig;
     VCRVolumeButtonEvent(YES, YES);
 }
 
 - (void)volumeIncreasePressUp {
     VCRDebugBump(@"debugVolumeSelectors", @"increaseUp");
-    @try { %orig; } @catch (NSException *exception) { VCRDebugEvent([NSString stringWithFormat:@"orig increaseUp threw: %@", exception.reason]); }
+    %orig;
     VCRVolumeButtonEvent(YES, NO);
 }
 
 - (void)volumeDecreasePressDownWithModifiers:(id)modifiers {
     VCRDebugBump(@"debugVolumeSelectors", @"decreaseDown");
-    @try { %orig; } @catch (NSException *exception) { VCRDebugEvent([NSString stringWithFormat:@"orig decreaseDown threw: %@", exception.reason]); }
+    %orig;
     VCRVolumeButtonEvent(NO, YES);
 }
 
 - (void)volumeDecreasePressUp {
     VCRDebugBump(@"debugVolumeSelectors", @"decreaseUp");
-    @try { %orig; } @catch (NSException *exception) { VCRDebugEvent([NSString stringWithFormat:@"orig decreaseUp threw: %@", exception.reason]); }
+    %orig;
     VCRVolumeButtonEvent(NO, NO);
 }
 

@@ -199,8 +199,13 @@ check("the consolidated volume-chord press is handled",
 check("every volume hook counts itself before calling the original",
       has('VCRDebugBump(@"debugVolumeSelectors", @"increaseDown")')
       and has('VCRDebugBump(@"debugVolumeSelectors", @"decreaseUp")'))
-check("the original volume handling cannot escape into SpringBoard",
-      has("orig increaseDown threw") and has("orig decreaseUp threw"))
+# Logos will not compile %orig inside an ObjC exception block, and skipping %orig entirely would
+# take the system's own volume handling away with it.
+check("every volume hook still runs the original handling",
+      has('VCRDebugBump(@"debugVolumeSelectors", @"increaseDown");\n    %orig;')
+      and has('VCRDebugBump(@"debugVolumeSelectors", @"decreaseUp");\n    %orig;'))
+check("no hook wraps %orig in an exception block",
+      not has("@try { %orig; }"))
 # Changing any option posts prefschanged, and that handler runs inside SpringBoard.
 check("the settings-changed handler is guarded and records its steps",
       has("prefs changed -> reload") and has("PREFS CHANGED CRASH"))
