@@ -1860,7 +1860,7 @@ static void VCRSignalHandler(int signalNumber) {
 
 static void VCRExceptionHandler(NSException *exception) {
     NSArray<NSString *> *frames = exception.callStackSymbols ?: @[];
-    NSString *where = [frames subarrayWithRange:NSMakeRange(0, MIN((NSUInteger)8, frames.count))].componentsJoinedByString:@" <- ";
+    NSString *where = [[frames subarrayWithRange:NSMakeRange(0, MIN((NSUInteger)8, frames.count))] componentsJoinedByString:@" <- "];
     VCRDebugEvent([NSString stringWithFormat:@"TWEAK CRASH %@: %@ | %@", exception.name, exception.reason, where]);
 }
 
