@@ -1,5 +1,12 @@
 #import <Foundation/Foundation.h>
 
+// Tweak.xm is Logos, so it compiles as Objective-C++ while this implementation is plain C/ObjC.
+// Without the extern "C" guard the declarations take C++ linkage and the tweak fails to link with
+// "Undefined symbols ... __Z19VCRTelegramSendFileP5NSURLP8NSString...".
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef void (^VCRTelegramLogBlock)(NSString *message);
 
 FOUNDATION_EXPORT NSString * const VCRTelegramPrefsDomain;
@@ -19,3 +26,7 @@ NSString *VCRTelegramKindForPath(NSString *path);
 BOOL VCRTelegramSendFile(NSURL *fileURL, NSString *kind, VCRTelegramLogBlock log);
 
 void VCRTelegramSendText(NSString *text, VCRTelegramLogBlock log);
+
+#ifdef __cplusplus
+}
+#endif

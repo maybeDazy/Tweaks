@@ -125,6 +125,8 @@ check("uploader source exists", os.path.exists(os.path.join(ROOT, "VCRTelegramUp
 check("uploader compiled into the tweak",
       "VolumeChordRecorder_FILES = Tweak.xm VCRTelegramUploader.m" in UP)
 check("uploader header included by the tweak", has('#import "VCRTelegramUploader.h"'))
+check("uploader header is C++-safe (Tweak.xm compiles as Objective-C++)",
+      'extern "C"' in open(os.path.join(ROOT, "VCRTelegramUploader.h"), encoding="utf-8").read())
 check("uploader invoked from a capture completion point", has("VCRUploadFinishedCapture("))
 check("audio recorder delegate added (no completion callback before)",
       has("VCRRecorderDelegate") and has("recorder.delegate = vcrRecorderDelegate;"))
