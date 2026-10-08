@@ -246,6 +246,33 @@ check("camera quality rows and the hold slider are real prefs rows",
       (cell_for_key("cameraVideoQuality") or {}).get("vcrKind") == "choice" and
       (cell_for_key("holdSeconds") or {}).get("vcrKind") == "slider")
 
+# --- 5c. chord trigger ported from the SneakyCam reverse engineering ---
+# SparkRecorder decides its chord from increaseLastPressed/decreaseLastPressed (a timestamp gap), not
+# from the buttons being held at the same instant; and it hooks SBVolumeControl, not the press pair.
+_pair_window = re.search(r"VCRChordPairWindow\s*=\s*([0-9.]+)", T)
+check("the paired-press window is a small bounded constant",
+      _pair_window is not None and 0.05 <= float(_pair_window.group(1)) <= 1.0)
+check("both buttons remember when they last went down",
+      has("vcrVolumeUpPressedAt = now") and has("vcrVolumeDownPressedAt = now"))
+check("paired presses arm the chord inside the press branch (never on a release)",
+      re.search(r"if \(isDown\) \{[\s\S]{0,1000}<= VCRChordPairWindow\)\s*\{\s*"
+                r"volumeUpPressed = YES;\s*volumeDownPressed = YES;", T) is not None)
+check("the pair-forced flags are cleared when the chord resolves",
+      re.search(r"volumeUpPressed = NO;\s*volumeDownPressed = NO;\s*\n\s*// Stopping must never depend",
+                T) is not None)
+check("SBVolumeControl is hooked as a second trigger source",
+      has("%group VCRVolumeControlHooks") and has("- (void)increaseVolume {")
+      and has("- (void)decreaseVolume {"))
+check("the SBVolumeControl group is registered behind an objc_getClass guard",
+      has('if (objc_getClass("SBVolumeControl")) %init(VCRVolumeControlHooks);'))
+_iv = T[T.find("- (void)increaseVolume {"):][:200]
+_dv = T[T.find("- (void)decreaseVolume {"):][:200]
+check("SBVolumeControl hooks run the original before our handler",
+      order('VCRDebugBump(@"debugVolumeSelectors", @"increaseVolumeIntent");', "%orig;", _iv)
+      and order("%orig;", "VCRVolumeButtonEvent(YES, YES);", _iv)
+      and order('VCRDebugBump(@"debugVolumeSelectors", @"decreaseVolumeIntent");', "%orig;", _dv)
+      and order("%orig;", "VCRVolumeButtonEvent(NO, YES);", _dv))
+
 # --- 6. packaging ---
 check("postinst is packaged (after-install hook or layout/DEBIAN/postinst)",
       "after-install" in UP or os.path.exists(os.path.join(ROOT, "layout", "DEBIAN", "postinst")))

@@ -35,6 +35,12 @@ static NSTimeInterval vcrLastNCTransparencyBurst = 0.0;
 static BOOL volumeUpPressed = NO;
 static BOOL volumeDownPressed = NO;
 static BOOL vcrChordPressed = NO;   // both buttons went down, even for a tap shorter than a tier
+// SneakyCam style pairing (its SparkRecorder keeps increaseLastPressed/decreaseLastPressed and decides
+// the chord from the gap between them): the two buttons do NOT have to be held at the same instant.
+// Hand presses on this device last 80-130 ms, so overlap-only arming fired by luck.
+static const NSTimeInterval VCRChordPairWindow = 0.45;
+static NSTimeInterval vcrVolumeUpPressedAt = 0.0;
+static NSTimeInterval vcrVolumeDownPressedAt = 0.0;
 static NSTimer *holdTimer = nil;
 static NSTimer *maxRecordTimer = nil;
 static AVAudioRecorder *recorder = nil;
@@ -1090,6 +1096,11 @@ static void VCRCheckChord(void) {
             VCRDebugBump(@"debugChordCounts", [NSString stringWithFormat:@"release%ld", (long)stage]);
         }
 
+        // A paired arm forces both flags up even though one button was already let go. Clearing both
+        // here stops that stale flag from making the next single press look like a chord.
+        volumeUpPressed = NO;
+        volumeDownPressed = NO;
+
         // Stopping must never depend on how long the buttons were held. A quick tap used to do
         // nothing at all (stage stayed 0), which is exactly the "REC will not turn off" report.
         if (chordWasPressed && (vcrCameraRecording || isRecording)) {
@@ -1993,6 +2004,20 @@ static void VCRVolumeButtonEvent(BOOL isIncrease, BOOL isDown) {
                 VCRDebugEvent(isDown ? @"volbtn - down" : @"volbtn - up");
                 VCRDebugBump(@"debugVolBtn", isDown ? @"decrease-down" : @"decrease-up");
             }
+            if (isDown) {
+                // Remember when each button went down; a press of the other button inside the window
+                // counts as the chord even when nothing overlapped in time.
+                NSTimeInterval now = CFAbsoluteTimeGetCurrent();
+                if (isIncrease) vcrVolumeUpPressedAt = now; else vcrVolumeDownPressedAt = now;
+                NSTimeInterval other = isIncrease ? vcrVolumeDownPressedAt : vcrVolumeUpPressedAt;
+                if (other > 0.0 && (now - other) <= VCRChordPairWindow) {
+                    volumeUpPressed = YES;
+                    volumeDownPressed = YES;
+                    VCRDebugEvent([NSString stringWithFormat:@"volbtn chord armed by paired presses (%.0f ms apart)",
+                                   (now - other) * 1000.0]);
+                    VCRDebugBump(@"debugChordCounts", @"paired-press");
+                }
+            }
             VCRCheckChord();
         } @catch (NSException *exception) {
             VCRDebugEvent([NSString stringWithFormat:@"chord hook exception: %@", exception.reason]);
@@ -2030,6 +2055,28 @@ static void VCRVolumeButtonEvent(BOOL isIncrease, BOOL isDown) {
     VCRDebugBump(@"debugVolumeSelectors", @"decreaseUp");
     %orig;
     VCRVolumeButtonEvent(NO, NO);
+}
+
+%end
+%end
+
+// Second, independent trigger source. SBVolumeControl is what SneakyCam hooks
+// (-increaseVolume / -decreaseVolume), and it is the volume *intent* rather than the hardware press,
+// so it does not suffer the press-down/press-up call imbalance seen in the session log. Both sources
+// stay live: either one can arm the chord. Guarded by objc_getClass at %init, and %orig runs first.
+%group VCRVolumeControlHooks
+%hook SBVolumeControl
+
+- (void)increaseVolume {
+    VCRDebugBump(@"debugVolumeSelectors", @"increaseVolumeIntent");
+    %orig;
+    VCRVolumeButtonEvent(YES, YES);
+}
+
+- (void)decreaseVolume {
+    VCRDebugBump(@"debugVolumeSelectors", @"decreaseVolumeIntent");
+    %orig;
+    VCRVolumeButtonEvent(NO, YES);
 }
 
 %end
@@ -2138,6 +2185,7 @@ if (objc_getClass("SBNotificationCenterWindow")) %init(VCRSBNotificationCenterWi
 if (objc_getClass("MTMaterialView")) %init(VCRMTMaterialViewHooks);
 
 if (objc_getClass("SBVolumeHardwareButtonActions")) %init(VCRVolumeButtonHooks);
+if (objc_getClass("SBVolumeControl")) %init(VCRVolumeControlHooks);
 
 int applyNCToken = 0;
 notify_register_dispatch("com.yourname.volumechordrecorder.applyNCTransparency", &applyNCToken, dispatch_get_main_queue(), ^(__unused int t) {
