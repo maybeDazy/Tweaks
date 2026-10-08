@@ -31,6 +31,7 @@ static NSTimeInterval vcrLastNCTransparencyBurst = 0.0;
 
 static BOOL volumeUpPressed = NO;
 static BOOL volumeDownPressed = NO;
+static BOOL vcrChordPressed = NO;   // both buttons went down, even for a tap shorter than a tier
 static NSTimer *holdTimer = nil;
 static NSTimer *maxRecordTimer = nil;
 static AVAudioRecorder *recorder = nil;
@@ -121,6 +122,8 @@ static void VCRAppendLogLine(NSString *msg) {
     }
 }
 
+static void VCRDebugEvent(NSString *msg);   // defined below; VCRLog mirrors into the same ring
+
 static void VCRLog(NSString *fmt, ...) {
     va_list args;
     va_start(args, fmt);
@@ -128,6 +131,9 @@ static void VCRLog(NSString *fmt, ...) {
     va_end(args);
     NSLog(@"%@ %@", VCRPrefix, msg);
     VCRAppendLogLine(msg);
+    // SpringBoard's sandbox denies the file above, so the only place these lines can actually be
+    // read back is the preferences ring that "Show Debug Log" prints.
+    VCRDebugEvent(msg);
 }
 
 // Diagnostic recorder for trigger plumbing. File writes are silently denied by SpringBoard's
@@ -341,18 +347,79 @@ static void VCRHapticTick(void) {
     VCRPlayHaptic(VCRHapticSoundID());
 }
 
+// The previous on-screen notice used the system user-notification alert, created with a zero
+// timeout and no button: that kind of alert is MODAL and can never be dismissed. It is what looked
+// like a "REC" badge that would not turn off, and it ate every touch until a respring. Show an
+// ordinary window instead - it is not interactive, so it cannot swallow a touch or the volume
+// buttons, and it always hides itself.
+static UIWindow *vcrHUDWindow = nil;
+static UILabel *vcrHUDLabel = nil;
+static NSTimer *vcrHUDTimer = nil;
+
+static void VCRHUDHide(void) {
+    if (vcrHUDTimer) { [vcrHUDTimer invalidate]; vcrHUDTimer = nil; }
+    UIWindow *window = vcrHUDWindow;
+    if (!window) return;
+    [UIView animateWithDuration:0.25 animations:^{ window.alpha = 0.0; }
+                     completion:^(__unused BOOL finished) { window.hidden = YES; }];
+}
+
 static void VCRShowNotification(NSString *title, NSString *message) {
     dispatch_async(dispatch_get_main_queue(), ^{
-        CFUserNotificationDisplayNotice(
-            0,                          // timeout (0 = no timeout)
-            0,                          // flags
-            NULL,                       // icon
-            NULL,                       // sound
-            NULL,                       // localization
-            (CFStringRef)title,         // title
-            (CFStringRef)message,       // message
-            NULL                        // default button
-        );
+        @try {
+            if (!vcrHUDWindow) {
+                UIWindow *window = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
+                // A window created without a scene does not render on iOS 13+.
+                for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+                    if ([scene isKindOfClass:[UIWindowScene class]]) {
+                        window.windowScene = (UIWindowScene *)scene;
+                        break;
+                    }
+                }
+                window.windowLevel = UIWindowLevelAlert + 1.0;
+                window.backgroundColor = [UIColor clearColor];
+                window.userInteractionEnabled = NO;   // never steal a press or a gesture
+                window.rootViewController = [[UIViewController alloc] init];
+                window.rootViewController.view.backgroundColor = [UIColor clearColor];
+
+                UIView *box = [[UIView alloc] init];
+                box.translatesAutoresizingMaskIntoConstraints = NO;
+                box.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.8];
+                box.layer.cornerRadius = 14.0;
+
+                UILabel *label = [[UILabel alloc] init];
+                label.translatesAutoresizingMaskIntoConstraints = NO;
+                label.numberOfLines = 2;
+                label.textAlignment = NSTextAlignmentCenter;
+                label.font = [UIFont systemFontOfSize:16.0 weight:UIFontWeightSemibold];
+                label.textColor = [UIColor whiteColor];
+
+                [window.rootViewController.view addSubview:box];
+                [box addSubview:label];
+                [NSLayoutConstraint activateConstraints:@[
+                    [box.centerXAnchor constraintEqualToAnchor:window.rootViewController.view.centerXAnchor],
+                    [box.topAnchor constraintEqualToAnchor:window.rootViewController.view.topAnchor constant:64.0],
+                    [label.leadingAnchor constraintEqualToAnchor:box.leadingAnchor constant:18.0],
+                    [label.trailingAnchor constraintEqualToAnchor:box.trailingAnchor constant:-18.0],
+                    [label.topAnchor constraintEqualToAnchor:box.topAnchor constant:10.0],
+                    [label.bottomAnchor constraintEqualToAnchor:box.bottomAnchor constant:-10.0],
+                ]];
+                vcrHUDWindow = window;
+                vcrHUDLabel = label;
+            }
+
+            vcrHUDLabel.text = message;
+            vcrHUDWindow.alpha = 1.0;
+            vcrHUDWindow.hidden = NO;
+
+            if (vcrHUDTimer) [vcrHUDTimer invalidate];
+            vcrHUDTimer = [NSTimer scheduledTimerWithTimeInterval:1.4 repeats:NO block:^(__unused NSTimer *timer) {
+                vcrHUDTimer = nil;
+                VCRHUDHide();
+            }];
+        } @catch (NSException *exception) {
+            VCRLog(@"HUD failed: %@ (%@)", title, exception.reason);
+        }
     });
 }
 
@@ -815,15 +882,20 @@ static void VCRStartVideoRecording(void) {
         if (VCRCameraPrepareSession(YES)) {
             VCRCameraStartRunningSync();
             [vcrMovieOutput startRecordingToOutputFileURL:tempURL recordingDelegate:delegate];
+            dispatch_async(dispatch_get_main_queue(), ^{
+                VCRLog(@"Camera video recording started -> %@", path);
+                VCRShowNotification(@"VolumeChordRecorder", @"REC");
+            });
         } else {
             vcrCameraRecording = NO;
             if (vcrMaxVideoTimer) { [vcrMaxVideoTimer invalidate]; vcrMaxVideoTimer = nil; }
             VCRLog(@"Camera: video prepare failed, aborted");
+            dispatch_async(dispatch_get_main_queue(), ^{
+                VCRShowNotification(@"VolumeChordRecorder", @"Video failed");
+            });
         }
     });
     VCRHapticStart();
-    VCRLog(@"Camera video recording started -> %@", path);
-    VCRShowNotification(@"VolumeChordRecorder", @"REC");
 
     if (vcrMaxVideoTimer) [vcrMaxVideoTimer invalidate];
     vcrMaxVideoTimer = [NSTimer scheduledTimerWithTimeInterval:vcrMaxRecordSeconds repeats:NO block:^(__unused NSTimer *timer) {
@@ -834,11 +906,18 @@ static void VCRStartVideoRecording(void) {
 }
 
 static void VCRStopVideoRecording(void) {
-    if (!vcrCameraRecording || !vcrMovieOutput) return;
-    VCRLog(@"Camera video stopping");
+    AVCaptureMovieFileOutput *output = vcrMovieOutput;
+    if (!output || (!vcrCameraRecording && !output.isRecording)) return;
+    VCRLog(@"Camera video stopping (flag=%d output=%d)", vcrCameraRecording, output.isRecording);
     if (vcrMaxVideoTimer) { [vcrMaxVideoTimer invalidate]; vcrMaxVideoTimer = nil; }
-    [vcrMovieOutput stopRecording];
-    // The recording delegate finishes the state transition and stops the session.
+    if (output.isRecording) {
+        [output stopRecording];   // the delegate finishes the state transition
+    } else {
+        // The flag outlived a start that failed, so nothing would ever clear it and every later
+        // start would be refused.
+        vcrCameraRecording = NO;
+        VCRLog(@"Camera: recording flag was stale, cleared");
+    }
 }
 
 static void VCRToggleVideoRecording(void) {
@@ -858,6 +937,7 @@ static void VCRResetChordState(void) {
     if (chordTimer2) { [chordTimer2 invalidate]; chordTimer2 = nil; }
     if (chordTimer3) { [chordTimer3 invalidate]; chordTimer3 = nil; }
     vcrChordStage = 0;
+    vcrChordPressed = NO;
 }
 
 static void VCRStopAnyRecording(void) {
@@ -879,7 +959,17 @@ static void VCRCheckChord(void) {
 
     if (!bothPressed) {
         NSInteger stage = vcrChordStage;
+        BOOL chordWasPressed = vcrChordPressed;   // read before the reset clears it
         VCRResetChordState();
+
+        // Stopping must never depend on how long the buttons were held. A quick tap used to do
+        // nothing at all (stage stayed 0), which is exactly the "REC will not turn off" report.
+        if (chordWasPressed && (vcrCameraRecording || isRecording)) {
+            VCRLog(@"Chord release (stage %ld) -> STOP active recording", (long)stage);
+            VCRDebugEvent(@"chord -> STOP");
+            VCRStopAnyRecording();
+            return;
+        }
         if (stage <= 0) return;
 
         if (vcrCameraRecording || isRecording) {
@@ -899,6 +989,7 @@ static void VCRCheckChord(void) {
     }
 
     if (!cameraChord && !audioChord) { VCRResetChordState(); return; }
+    vcrChordPressed = YES;
     if (holdTimer || chordTimer2 || chordTimer3) return; // already counting
 
     NSTimeInterval tier = MAX(0.4, vcrHoldSeconds);

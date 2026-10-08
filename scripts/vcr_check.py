@@ -149,6 +149,35 @@ check("telegram notifications registered by the tweak",
       has("com.yourname.volumechordrecorder.telegramtest") and
       has("com.yourname.volumechordrecorder.telegramsendlatest"))
 
+# --- 5b. regressions that were reported from the device ---
+# A CFUserNotificationDisplayNotice with timeout 0 and no default button is modal and can never be
+# dismissed ("REC would not turn off"), and it eats touches until a respring.
+check("no undismissable modal alert is used for on-screen notices",
+      "CFUserNotificationDisplayNotice" not in T)
+check("on-screen notice is a non-interactive, self-hiding HUD",
+      has("vcrHUDWindow") and has("userInteractionEnabled = NO") and has("VCRHUDHide"))
+check("notice window attaches to a scene (iOS 13+ would not render otherwise)",
+      has("window.windowScene = (UIWindowScene *)scene"))
+# Stopping a running capture must not require holding the chord long enough to open a tier.
+check("any chord release stops a running capture",
+      has("vcrChordPressed") and has("if (chordWasPressed && (vcrCameraRecording || isRecording))"))
+check("video stop also trusts the file output, not only the flag",
+      has("AVCaptureMovieFileOutput *output = vcrMovieOutput;") and has("output.isRecording"))
+check("REC is announced only after the recording actually starts",
+      order("startRecordingToOutputFileURL:", 'VCRShowNotification(@"VolumeChordRecorder", @"REC")') and
+      has('VCRShowNotification(@"VolumeChordRecorder", @"Video failed")'))
+check("tweak decisions reach the prefs ring (the file log is sandbox-denied)",
+      has("    VCRDebugEvent(msg);"))
+check("prefs bundle records why Settings aborted",
+      "NSSetUncaughtExceptionHandler" in MM and "PREFS CRASH" in MM)
+check("choice sheet keeps the popover path off the phone",
+      "UIUserInterfaceSizeClassRegular" in MM)
+check("camera quality rows and the hold slider are real prefs rows",
+      cell_for_key("cameraVideoQuality") is not None and cell_for_key("cameraPhotoQuality") is not None
+      and cell_for_key("holdSeconds") is not None and
+      (cell_for_key("cameraVideoQuality") or {}).get("vcrKind") == "choice" and
+      (cell_for_key("holdSeconds") or {}).get("vcrKind") == "slider")
+
 # --- 6. packaging ---
 check("postinst is packaged (after-install hook or layout/DEBIAN/postinst)",
       "after-install" in UP or os.path.exists(os.path.join(ROOT, "layout", "DEBIAN", "postinst")))

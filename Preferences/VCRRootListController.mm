@@ -46,6 +46,27 @@ static void VCRPrefsLog(NSString *fmt, ...) {
     VCRPrefsSet(@"debugEvents", [lines componentsJoinedByString:@"\n"]);
 }
 
+// Settings aborted while a choice row was tapped and rootHide left no crash report behind, so
+// record the reason where it can actually be read: the same ring the tweak writes to, shown by
+// "Show Debug Log". Keep the handler to plain C-level work only.
+static void VCRPrefsRecordException(NSException *exception) {
+    NSString *line = [NSString stringWithFormat:@"PREFS CRASH %@: %@", exception.name, exception.reason];
+    NSString *existing = VCRPrefsValue(@"debugEvents");
+    NSMutableArray<NSString *> *lines = [NSMutableArray array];
+    for (NSString *item in [existing componentsSeparatedByString:@"\n"]) {
+        if (item.length > 0) [lines addObject:item];
+    }
+    [lines addObject:line];
+    NSArray<NSString *> *symbols = [exception.callStackSymbols subarrayWithRange:NSMakeRange(0, MIN((NSUInteger)10, exception.callStackSymbols.count))];
+    [lines addObject:[symbols componentsJoinedByString:@" | "]];
+    while (lines.count > 12) [lines removeObjectAtIndex:0];
+    VCRPrefsSet(@"debugEvents", [lines componentsJoinedByString:@"\n"]);
+}
+
+__attribute__((constructor)) static void VCRPrefsInstallExceptionHandler(void) {
+    NSSetUncaughtExceptionHandler(&VCRPrefsRecordException);
+}
+
 @interface VCRRootListController : PSListController
 @end
 
@@ -213,15 +234,28 @@ static void VCRPrefsLog(NSString *fmt, ...) {
         [sheet addAction:[UIAlertAction actionWithTitle:label style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) {
             [self vcrWriteValue:value forSpecifier:specifier];
             VCRPrefsLog(@"choice %@ = %@", key, value);
-            [self.tableView reloadRowsAtIndexPaths:@[indexPath] withRowAnimation:UITableViewRowAnimationNone];
+            // reloadRows throws if the row count no longer matches; a full reload always works.
+            @try {
+                [self.tableView reloadRowsAtIndexPaths:@[indexPath] withRowAnimation:UITableViewRowAnimationNone];
+            } @catch (__unused NSException *exception) {
+                [self.tableView reloadData];
+            }
         }]];
     }
     [sheet addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
 
-    UITableViewCell *cell = [self.tableView cellForRowAtIndexPath:indexPath];
-    sheet.popoverPresentationController.sourceView = cell ?: self.view;
-    sheet.popoverPresentationController.sourceRect = cell ? cell.bounds : self.view.bounds;
-    [self presentViewController:sheet animated:YES completion:nil];
+    // The popover anchor only matters on iPad, and Settings has aborted around this presentation
+    // before, so keep it out of the way of the phone path entirely.
+    if (self.traitCollection.horizontalSizeClass == UIUserInterfaceSizeClassRegular) {
+        UITableViewCell *cell = [self.tableView cellForRowAtIndexPath:indexPath];
+        sheet.popoverPresentationController.sourceView = cell ?: self.view;
+        sheet.popoverPresentationController.sourceRect = cell ? cell.bounds : self.view.bounds;
+    }
+    @try {
+        [self presentViewController:sheet animated:YES completion:nil];
+    } @catch (NSException *exception) {
+        VCRPrefsLog(@"choice sheet failed: %@ (%@)", exception.name, exception.reason);
+    }
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
