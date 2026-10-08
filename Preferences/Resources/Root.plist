@@ -572,6 +572,14 @@
 		</dict>
 		<dict>
 			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>Show Volume API Dump</string>
+			<key>action</key>
+			<string>showVolumeAPIDump</string>
+		</dict>
+		<dict>
+			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>label</key>
 			<string>Actions</string>

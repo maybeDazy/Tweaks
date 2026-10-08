@@ -4,6 +4,7 @@
 #import <notify.h>
 #import <math.h>
 #import <objc/runtime.h>
+#import <string.h>
 #import "VCRTelegramUploader.h"
 static NSString * const VCRPrefsID = @"com.yourname.volumechordrecorder";
 static NSString * const VCRPrefix = @"[VolumeChordRecorder]";
@@ -169,6 +170,69 @@ static void VCRDebugEvent(NSString *msg) {
     while (lines.count > 8) [lines removeObjectAtIndex:0];
     CFPreferencesSetAppValue(CFSTR("debugEvents"), (__bridge CFStringRef)[lines componentsJoinedByString:@"\n"], domain);
     CFPreferencesAppSynchronize(domain);
+}
+
+// Aggregates trigger plumbing into a "label=count label=count" string so a single prefs read can
+// prove which press types and which volume-change reasons actually arrive - the 8-line ring buffer
+// above is too short to answer that.
+static void VCRDebugBump(NSString *prefKey, NSString *label) {
+    if (!label) return;
+    CFStringRef domain = (__bridge CFStringRef)VCRPrefsID;
+
+    NSString *existing = nil;
+    CFPropertyListRef raw = CFPreferencesCopyAppValue((__bridge CFStringRef)prefKey, domain);
+    if (raw) {
+        if (CFGetTypeID(raw) == CFStringGetTypeID()) existing = [NSString stringWithString:(__bridge NSString *)raw];
+        CFRelease(raw);
+    }
+
+    long long value = 0;
+    NSMutableArray<NSString *> *parts = [NSMutableArray array];
+    for (NSString *token in [existing componentsSeparatedByString:@" "]) {
+        if (token.length == 0) continue;
+        NSRange separator = [token rangeOfString:@"="];
+        if (separator.location == NSNotFound) continue;
+        NSString *name = [token substringToIndex:separator.location];
+        if ([name isEqualToString:label]) value = [[token substringFromIndex:separator.location + 1] longLongValue];
+        else [parts addObject:token];
+    }
+    [parts addObject:[NSString stringWithFormat:@"%@=%lld", label, value + 1]];
+    CFPreferencesSetAppValue((__bridge CFStringRef)prefKey, (__bridge CFStringRef)[parts componentsJoinedByString:@" "], domain);
+    CFPreferencesAppSynchronize(domain);
+}
+
+// Lists the real classes/selectors that mention volume or buttons, straight from the running
+// SpringBoard. Guessing a class name for a %hook crashes the tweak at load, so the names are read
+// from the device instead of invented.
+static void VCRDumpVolumeAPI(void) {
+    NSMutableArray<NSString *> *groups = [NSMutableArray array];
+    unsigned int classCount = 0;
+    Class *classes = objc_copyClassList(&classCount);
+    for (unsigned int i = 0; i < classCount; i++) {
+        const char *className = class_getName(classes[i]);
+        if (!className || !strcasestr(className, "volume")) continue;
+
+        NSMutableArray<NSString *> *selectors = [NSMutableArray array];
+        unsigned int methodCount = 0;
+        Method *methods = class_copyMethodList(classes[i], &methodCount);
+        for (unsigned int m = 0; m < methodCount; m++) {
+            const char *selectorName = sel_getName(method_getName(methods[m]));
+            if (strcasestr(selectorName, "volume") || strcasestr(selectorName, "button")) {
+                [selectors addObject:[NSString stringWithUTF8String:selectorName]];
+            }
+        }
+        free(methods);
+        if (selectors.count > 0) {
+            [groups addObject:[NSString stringWithFormat:@"%s :: %@", className, [selectors componentsJoinedByString:@", "]]];
+        }
+    }
+    free(classes);
+
+    NSString *dump = [groups componentsJoinedByString:@"\n"];
+    if (dump.length > 4000) dump = [dump substringToIndex:4000];
+    VCRDebugEvent([NSString stringWithFormat:@"volume API dump: %lu classes", (unsigned long)groups.count]);
+    CFPreferencesSetAppValue(CFSTR("debugVolumeAPI"), (__bridge CFStringRef)dump, CFSTR("com.yourname.volumechordrecorder"));
+    CFPreferencesAppSynchronize(CFSTR("com.yourname.volumechordrecorder"));
 }
 
 static BOOL VCRBoolPref(NSString *key, BOOL fallback) {
@@ -1399,6 +1463,7 @@ static void VCRNCApplyToMaterialView(UIView *view) {
         NSInteger type = press.type;
         VCRLog(@"press began type=%ld (state up=%d down=%d)", (long)type, volumeUpPressed, volumeDownPressed);
         VCRDebugEvent([NSString stringWithFormat:@"press began type=%ld", (long)type]);
+        VCRDebugBump(@"debugPressTypes", [NSString stringWithFormat:@"began%ld", (long)type]);
         if (VCRPressTypeIsVolumeUp(type)) volumeUpPressed = YES;
         if (VCRPressTypeIsVolumeDown(type)) volumeDownPressed = YES;
     }
@@ -1411,6 +1476,7 @@ static void VCRNCApplyToMaterialView(UIView *view) {
         NSInteger type = press.type;
         VCRLog(@"press ended type=%ld", (long)type);
         VCRDebugEvent([NSString stringWithFormat:@"press ended type=%ld", (long)type]);
+        VCRDebugBump(@"debugPressTypes", [NSString stringWithFormat:@"ended%ld", (long)type]);
         if (VCRPressTypeIsVolumeUp(type)) volumeUpPressed = NO;
         if (VCRPressTypeIsVolumeDown(type)) volumeDownPressed = NO;
     }
@@ -1639,9 +1705,12 @@ static void VCRNCApplyToMaterialView(UIView *view) {
             NSString *reason = note.userInfo[@"AVSystemController_AudioVolumeChangeReasonNotificationParameter"];
             id volume = note.userInfo[@"AVSystemController_AudioVolumeNotificationParameter"];
             VCRDebugEvent([NSString stringWithFormat:@"volchange reason=%@ volume=%@", reason ?: @"?", volume ?: @"?"]);
+            VCRDebugBump(@"debugVolchg", reason ?: @"(no reason)");
         }];
 
         VCRLoadPrefs();
+
+        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_BACKGROUND, 0), ^{ VCRDumpVolumeAPI(); });
 
         // Telegram uploads report into the same CFPreferences debug log the Settings pane shows.
         VCRTelegramSetLogger(^(NSString *message) { VCRDebugEvent(message); });

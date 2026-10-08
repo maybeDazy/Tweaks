@@ -135,6 +135,10 @@ check("50 MB bot limit guarded",
 check("multipart body streamed via a temp file",
       has("uploadTaskWithRequest:request fromFile:", uploader()) and
       has("seekToEndOfFile", uploader()))
+check("trigger diagnostics aggregate press types and volume reasons",
+      has("VCRDebugBump") and has('VCRDebugBump(@"debugPressTypes"') and has('VCRDebugBump(@"debugVolchg"'))
+check("volume API is read from the device instead of guessed",
+      has("VCRDumpVolumeAPI") and has("objc_copyClassList") and has("debugVolumeAPI"))
 check("telegram notifications registered by the tweak",
       has("com.yourname.volumechordrecorder.telegramtest") and
       has("com.yourname.volumechordrecorder.telegramsendlatest"))

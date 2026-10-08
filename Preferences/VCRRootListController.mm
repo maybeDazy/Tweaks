@@ -447,6 +447,21 @@ static void VCRPrefsLog(NSString *fmt, ...) {
 
 // The uploader lives in the tweak (SpringBoard), not in this bundle, so these buttons ask it to
 // run - which also exercises the real code path instead of a copy of it.
+- (void)showVolumeAPIDump {
+    NSString *dump = VCRPrefsValue(@"debugVolumeAPI") ?: @"(not collected yet - respring with the latest build)";
+    NSString *pressTypes = VCRPrefsValue(@"debugPressTypes") ?: @"(none)";
+    NSString *volChanges = VCRPrefsValue(@"debugVolchg") ?: @"(none)";
+    NSString *message = [NSString stringWithFormat:@"press types: %@\nvolume changes: %@\n\n%@", pressTypes, volChanges, dump];
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Volume API (from SpringBoard)"
+                                                                  message:message
+                                                           preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Copy All" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) {
+        [UIPasteboard generalPasteboard].string = message;
+    }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Close" style:UIAlertActionStyleCancel handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
 - (void)sendTelegramTest {
     notify_post("com.yourname.volumechordrecorder.telegramtest");
     [self showAlertWithTitle:@"Telegram"
