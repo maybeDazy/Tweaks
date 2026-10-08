@@ -7,6 +7,9 @@
 @import Darwin.POSIX.sys.wait;
 
 static NSString * const VCRPrefsID = @"com.yourname.volumechordrecorder";
+
+static id VCRPrefsValue(NSString *key);   // defined below, after the tags
+
 // The tweak picks a folder that really exists and publishes it; /var/mobile/Media does not
 // exist on this device at all, so this must never be hard-coded to that path alone.
 static NSString *VCRRecordingsDirPath(void) {
