@@ -191,6 +191,8 @@ check("photo and video capture cannot let an exception escape",
 check("the tweak catches its own exceptions and fatal signals",
       has("NSSetUncaughtExceptionHandler(&VCRExceptionHandler)") and has("VCRSignalHandler") and
       has("tweak fatal signal") and has("TWEAK CRASH"))
+check("the fatal-signal log is written where SpringBoard can write",
+      has("tweak-crash.log") and has("VCRRecordingDirectory() stringByAppendingPathComponent"))
 check("signal handlers are installed in the initialiser",
       has("signal(signals[index], VCRSignalHandler)"))
 # --- 5e. hooks must not be able to take the process down ---

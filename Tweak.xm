@@ -1949,13 +1949,19 @@ static void VCRVolumeButtonEvent(BOOL isIncrease, BOOL isDown) {
         NSString *bundleID = [[NSBundle mainBundle] bundleIdentifier] ?: @"unknown";
 
         NSSetUncaughtExceptionHandler(&VCRExceptionHandler);
-        vcrCrashDescriptor = open("/private/var/tmp/VolumeChordRecorder.crash", O_WRONLY | O_CREAT | O_APPEND, 0644);
         {
+            // /private/var/tmp turned out not to be writable from SpringBoard (no file appeared),
+            // so put the fatal-signal log in the captures folder, which is proved writable first.
+            NSString *crashLog = [VCRRecordingDirectory() stringByAppendingPathComponent:@"tweak-crash.log"];
+            if (vcrCrashDescriptor < 0) {
+                vcrCrashDescriptor = open(crashLog.fileSystemRepresentation, O_WRONLY | O_CREAT | O_APPEND, 0644);
+            }
             static const int signals[] = {SIGSEGV, SIGBUS, SIGABRT, SIGILL, SIGTRAP};
             for (unsigned long index = 0; index < sizeof(signals) / sizeof(signals[0]); index++) {
                 signal(signals[index], VCRSignalHandler);
             }
         }
+        VCRLog(@"Fatal-signal log %@ (descriptor %d)", vcrCrashDescriptor >= 0 ? @"open" : @"unavailable", vcrCrashDescriptor);
 
         // Load evidence. CFPreferences is sandbox-safe (unlike file writes, which SpringBoard
         // may deny silently), so this records whether the dylib was actually injected and what
