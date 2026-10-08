@@ -83,8 +83,17 @@ static NSString *vcrCurrentVideoPath = nil;
 #define VCR_PRESS_TYPE_VOLUME_DOWN 103
 #endif
 
+// SpringBoard reports a *simultaneous* volume-up + volume-down press as one UIPress of type 104.
+// On the device that press always arrived together with a release for both volume buttons and with
+// no press-down for either button - which is exactly why every chord attempt after the first did
+// nothing at all. 102/103 stay the staggered presses; 104 is the chord.
+#ifndef VCR_PRESS_TYPE_VOLUME_CHORD
+#define VCR_PRESS_TYPE_VOLUME_CHORD 104
+#endif
+
 static BOOL VCRPressTypeIsVolumeUp(NSInteger type) { return type == VCR_PRESS_TYPE_VOLUME_UP; }
 static BOOL VCRPressTypeIsVolumeDown(NSInteger type) { return type == VCR_PRESS_TYPE_VOLUME_DOWN; }
+static BOOL VCRPressTypeIsVolumeChord(NSInteger type) { return type == VCR_PRESS_TYPE_VOLUME_CHORD; }
 
 static NSString *VCRDebugLogPath(void) {
     return @"/var/mobile/Library/Caches/VolumeChordRecorder.log";
@@ -521,7 +530,10 @@ static void VCRUploadFinishedCapture(NSURL *fileURL) {
         VCRDebugEvent(@"telegram: audio finish unsuccessful");
         return;
     }
-    VCRLog(@"Recording finalised: %@", url.path);
+    NSDictionary *vcrAttributes = [[NSFileManager defaultManager] attributesOfItemAtPath:url.path error:nil];
+    // The size is what proves the capture really landed on disk: this path is not visible to a
+    // plain shell on this jailbreak, so the number in the log is the only hard evidence.
+    VCRLog(@"Recording finalised: %@ (%llu bytes)", url.path, (unsigned long long)[vcrAttributes fileSize]);
     VCRUploadFinishedCapture(url);
 }
 @end
@@ -1549,24 +1561,42 @@ static void VCRNCFindAndApplyInView(UIView *view, NSUInteger depth) {
     }
 }
 
+// This walks every window of SpringBoard and is reached from the settings-changed notification, the
+// layout hooks and the trigger path. Without a guard those can re-enter each other and keep the main
+// thread busy inside a process that has to keep answering, so coalesce instead.
+static BOOL vcrNCApplyInFlight = NO;
+static BOOL vcrNCApplyAgain = NO;
+
 static void VCRNCApplyToAllKnownWindows(void) {
     if (!vcrNCTransparencyEnabled) return;
+    if (vcrNCApplyInFlight) { vcrNCApplyAgain = YES; return; }
 
+    vcrNCApplyInFlight = YES;
     dispatch_async(dispatch_get_main_queue(), ^{
-        UIApplication *app = [UIApplication sharedApplication];
+        @try {
+            UIApplication *app = [UIApplication sharedApplication];
 
-        for (UIWindow *window in app.windows) {
-            if (VCRNCWindowLooksLikeContext(window)) {
-                if (vcrNCLogViews) {
-                    VCRLog(@"Applying NC transparency to window %@", NSStringFromClass([window class]));
+            for (UIWindow *window in app.windows) {
+                if (VCRNCWindowLooksLikeContext(window)) {
+                    if (vcrNCLogViews) {
+                        VCRLog(@"Applying NC transparency to window %@", NSStringFromClass([window class]));
+                    }
+
+                    window.opaque = NO;
+                    window.layer.opaque = NO;
+                    VCRNCSetBackgroundAlpha(window, 0.0);
+                    VCRNCApplyToContainer(window);
+                } else {
+                    VCRNCFindAndApplyInView(window, 0);
                 }
-
-                window.opaque = NO;
-                window.layer.opaque = NO;
-                VCRNCSetBackgroundAlpha(window, 0.0);
-                VCRNCApplyToContainer(window);
-            } else {
-                VCRNCFindAndApplyInView(window, 0);
+            }
+        } @catch (NSException *exception) {
+            VCRDebugEvent([NSString stringWithFormat:@"NC apply exception: %@", exception.reason]);
+        } @finally {
+            vcrNCApplyInFlight = NO;
+            if (vcrNCApplyAgain) {
+                vcrNCApplyAgain = NO;
+                VCRNCApplyToAllKnownWindows();
             }
         }
     });
@@ -1642,6 +1672,12 @@ static void VCRNCApplyToMaterialView(UIView *view) {
             VCRDebugBump(@"debugPressTypes", [NSString stringWithFormat:@"began%ld", (long)type]);
             if (VCRPressTypeIsVolumeUp(type)) volumeUpPressed = YES;
             if (VCRPressTypeIsVolumeDown(type)) volumeDownPressed = YES;
+            if (VCRPressTypeIsVolumeChord(type)) {
+                // Both buttons in one event: that is the chord, so treat it as both going down.
+                VCRDebugEvent(@"volbtn chord (consolidated press)");
+                volumeUpPressed = YES;
+                volumeDownPressed = YES;
+            }
         }
         VCRCheckChord();
     } @catch (NSException *exception) {
@@ -1658,6 +1694,10 @@ static void VCRNCApplyToMaterialView(UIView *view) {
             VCRDebugBump(@"debugPressTypes", [NSString stringWithFormat:@"ended%ld", (long)type]);
             if (VCRPressTypeIsVolumeUp(type)) volumeUpPressed = NO;
             if (VCRPressTypeIsVolumeDown(type)) volumeDownPressed = NO;
+            if (VCRPressTypeIsVolumeChord(type)) {
+                volumeUpPressed = NO;
+                volumeDownPressed = NO;
+            }
         }
         VCRCheckChord();
     } @catch (NSException *exception) {
@@ -1921,23 +1961,29 @@ static void VCRVolumeButtonEvent(BOOL isIncrease, BOOL isDown) {
 %group VCRVolumeButtonHooks
 %hook SBVolumeHardwareButtonActions
 
+// Every selector counts itself into a dedicated key before %orig runs, so a cumulative tally
+// survives the 14-line ring: that is how "which of the four ever fires" gets answered for good.
 - (void)volumeIncreasePressDownWithModifiers:(id)modifiers {
-    %orig;
+    VCRDebugBump(@"debugVolumeSelectors", @"increaseDown");
+    @try { %orig; } @catch (NSException *exception) { VCRDebugEvent([NSString stringWithFormat:@"orig increaseDown threw: %@", exception.reason]); }
     VCRVolumeButtonEvent(YES, YES);
 }
 
 - (void)volumeIncreasePressUp {
-    %orig;
+    VCRDebugBump(@"debugVolumeSelectors", @"increaseUp");
+    @try { %orig; } @catch (NSException *exception) { VCRDebugEvent([NSString stringWithFormat:@"orig increaseUp threw: %@", exception.reason]); }
     VCRVolumeButtonEvent(YES, NO);
 }
 
 - (void)volumeDecreasePressDownWithModifiers:(id)modifiers {
-    %orig;
+    VCRDebugBump(@"debugVolumeSelectors", @"decreaseDown");
+    @try { %orig; } @catch (NSException *exception) { VCRDebugEvent([NSString stringWithFormat:@"orig decreaseDown threw: %@", exception.reason]); }
     VCRVolumeButtonEvent(NO, YES);
 }
 
 - (void)volumeDecreasePressUp {
-    %orig;
+    VCRDebugBump(@"debugVolumeSelectors", @"decreaseUp");
+    @try { %orig; } @catch (NSException *exception) { VCRDebugEvent([NSString stringWithFormat:@"orig decreaseUp threw: %@", exception.reason]); }
     VCRVolumeButtonEvent(NO, NO);
 }
 
@@ -2008,16 +2054,24 @@ static void VCRVolumeButtonEvent(BOOL isIncrease, BOOL isDown) {
 
         int prefsToken = 0;
         notify_register_dispatch("com.yourname.volumechordrecorder.prefschanged", &prefsToken, dispatch_get_main_queue(), ^(__unused int t) {
-            VCRLoadPrefs();
-            if (!vcrEnabled && isRecording) {
-                VCRLog(@"Disabled from Settings while recording, stopping");
-                VCRStopRecording();
+            // Settings posts this for every single option change and all of it runs inside
+            // SpringBoard, so an exception here - or a main thread that never comes back - kills the
+            // process and reads on the device as "changing an option crashes it".
+            @try {
+                VCRDebugEvent(@"prefs changed -> reload");
+                VCRLoadPrefs();
+                if (!vcrEnabled && isRecording) {
+                    VCRLog(@"Disabled from Settings while recording, stopping");
+                    VCRStopRecording();
+                }
+                if (!vcrEnabled && vcrCameraRecording) {
+                    VCRLog(@"Disabled from Settings while recording video, stopping");
+                    VCRStopVideoRecording();
+                }
+                VCRNCApplyToAllKnownWindows();
+            } @catch (NSException *exception) {
+                VCRDebugEvent([NSString stringWithFormat:@"PREFS CHANGED CRASH %@: %@", exception.name, exception.reason]);
             }
-            if (!vcrEnabled && vcrCameraRecording) {
-                VCRLog(@"Disabled from Settings while recording video, stopping");
-                VCRStopVideoRecording();
-            }
-            VCRNCApplyToAllKnownWindows();
         });
 // Ungrouped hooks (SpringBoard volume/sendEvent, SBSensorActivityDataProvider) live in
 // Logos' implicit _ungrouped group. Because this file uses %group elsewhere, Logos requires

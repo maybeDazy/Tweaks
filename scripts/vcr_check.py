@@ -191,6 +191,23 @@ check("photo and video capture cannot let an exception escape",
 check("the tweak catches its own exceptions and fatal signals",
       has("NSSetUncaughtExceptionHandler(&VCRExceptionHandler)") and has("VCRSignalHandler") and
       has("tweak fatal signal") and has("TWEAK CRASH"))
+# Device evidence: a simultaneous volume-up+down press arrives as ONE UIPress of type 104 - never
+# as 102/103 - and with releases for both buttons but no press-down, so the chord must accept it.
+check("the consolidated volume-chord press is handled",
+      has("VCRPressTypeIsVolumeChord") and has("VCR_PRESS_TYPE_VOLUME_CHORD")
+      and has("volbtn chord (consolidated press)"))
+check("every volume hook counts itself before calling the original",
+      has('VCRDebugBump(@"debugVolumeSelectors", @"increaseDown")')
+      and has('VCRDebugBump(@"debugVolumeSelectors", @"decreaseUp")'))
+check("the original volume handling cannot escape into SpringBoard",
+      has("orig increaseDown threw") and has("orig decreaseUp threw"))
+# Changing any option posts prefschanged, and that handler runs inside SpringBoard.
+check("the settings-changed handler is guarded and records its steps",
+      has("prefs changed -> reload") and has("PREFS CHANGED CRASH"))
+check("the Notification Center re-apply cannot re-enter or storm the main thread",
+      has("vcrNCApplyInFlight") and has("vcrNCApplyAgain") and has("NC apply exception"))
+check("the finished capture reports its size",
+      has("(unsigned long long)[vcrAttributes fileSize]"))
 check("the fatal-signal log is written where SpringBoard can write",
       has("tweak-crash.log") and has("VCRRecordingDirectory() stringByAppendingPathComponent"))
 check("signal handlers are installed in the initialiser",
