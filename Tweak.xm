@@ -213,7 +213,7 @@ static void VCRLoadPrefs(void) {
     vcrEnabled = VCRBoolPref(@"enabled", YES);
     vcrHaptics = VCRBoolPref(@"haptics", YES);
     vcrLogPresses = VCRBoolPref(@"logPresses", NO);
-    vcrHoldSeconds = VCRDoublePref(@"holdSeconds", 2.0, 0.0, 10.0);
+    vcrHoldSeconds = VCRDoublePref(@"holdSeconds", 2.0, 0.2, 10.0);
     vcrMaxRecordSeconds = VCRDoublePref(@"maxRecordSeconds", 600.0, 5.0, 7200.0);
     vcrVolumeChordTrigger = VCRBoolPref(@"volumeChordTrigger", NO);
     vcrThreeFingerSwipeDownTrigger = VCRBoolPref(@"threeFingerSwipeDownTrigger", YES);
@@ -445,6 +445,17 @@ static NSString *VCRCameraVideoPresetConstant(void) {
     return AVCaptureSessionPresetHigh; // auto
 }
 
+// Requested resolution/frame rate for the current quality pref. width == 0 means "auto".
+typedef struct { int32_t width; int32_t height; int32_t fps; } VCRVideoTarget;
+
+static VCRVideoTarget VCRVideoTargetForQuality(void) {
+    NSString *q = vcrCameraVideoQuality;
+    if ([q hasPrefix:@"720p"])  return (VCRVideoTarget){1280, 720, 30};
+    if ([q hasPrefix:@"1080p"]) return (VCRVideoTarget){1920, 1080, [q hasSuffix:@"60"] ? 60 : 30};
+    if ([q hasPrefix:@"4k"])    return (VCRVideoTarget){3840, 2160, [q hasSuffix:@"60"] ? 60 : 30};
+    return (VCRVideoTarget){0, 0, 0};
+}
+
 // Frame rate from the same pref. 0 means "leave the device default" (auto).
 static int32_t VCRCameraFPSForQuality(void) {
     if ([vcrCameraVideoQuality hasSuffix:@"60"]) return 60;
@@ -452,40 +463,64 @@ static int32_t VCRCameraFPSForQuality(void) {
     return 0;
 }
 
-// Try to force the requested frame rate on the device by selecting a format that
-// supports it, then pinning min/max frame duration.
-static void VCRCameraApplyFrameRate(AVCaptureDevice *device, int32_t fps) {
-    if (!device || fps <= 0) return;
+// The session preset alone does not decide the recording resolution, and the previous
+// implementation forced the *largest* format that supported the frame rate - so every quality
+// recorded at the biggest format and the selection appeared to do nothing. Pick the format whose
+// dimensions match the request exactly, then pin the frame duration.
+static BOOL VCRCameraApplyVideoFormat(AVCaptureDevice *device) {
+    if (!device) return NO;
+    VCRVideoTarget target = VCRVideoTargetForQuality();
 
     NSError *error = nil;
     if (![device lockForConfiguration:&error]) {
         VCRLog(@"Camera: lockForConfiguration failed %@", error);
-        return;
+        return NO;
     }
 
     AVCaptureDeviceFormat *chosen = nil;
-    int64_t chosenArea = 0;
-    for (AVCaptureDeviceFormat *format in device.formats) {
-        float maxRate = 0.0f;
-        for (AVFrameRateRange *range in format.videoSupportedFrameRateRanges) {
-            if (range.maxFrameRate > maxRate) maxRate = range.maxFrameRate;
+    if (target.width > 0) {
+        for (AVCaptureDeviceFormat *format in device.formats) {
+            CMVideoDimensions dims = CMVideoFormatDescriptionGetDimensions(format.formatDescription);
+            if (dims.width != target.width || dims.height != target.height) continue;
+            float maxRate = 0.0f;
+            for (AVFrameRateRange *range in format.videoSupportedFrameRateRanges) {
+                if (range.maxFrameRate > maxRate) maxRate = range.maxFrameRate;
+            }
+            if (maxRate + 0.001f < (float)target.fps) continue;
+            chosen = format;
+            break;
         }
-        if (maxRate < (float)fps) continue;
-        CMVideoDimensions dims = CMVideoFormatDescriptionGetDimensions(format.formatDescription);
-        int64_t area = (int64_t)dims.width * (int64_t)dims.height;
-        if (!chosen || area > chosenArea) { chosen = format; chosenArea = area; }
     }
 
     if (chosen) {
-        CMVideoDimensions dims = CMVideoFormatDescriptionGetDimensions(chosen.formatDescription);
         device.activeFormat = chosen;
-        device.activeVideoMinFrameDuration = CMTimeMake(1, fps);
-        device.activeVideoMaxFrameDuration = CMTimeMake(1, fps);
-        VCRLog(@"Camera: fps=%d applied on %dx%d", (int)fps, (int)dims.width, (int)dims.height);
-    } else {
-        VCRLog(@"Camera: no format supports fps=%d (keeping default)", (int)fps);
+        device.activeVideoMinFrameDuration = CMTimeMake(1, target.fps);
+        device.activeVideoMaxFrameDuration = CMTimeMake(1, target.fps);
     }
     [device unlockForConfiguration];
+
+    if (target.width > 0 && !chosen) {
+        VCRLog(@"Camera: no %dx%d@%dfps format on %@ - quality %@ ignored",
+               (int)target.width, (int)target.height, (int)target.fps,
+               device.localizedName, vcrCameraVideoQuality);
+    }
+    return chosen != nil;
+}
+
+// Log what the device actually ended up with. This is the line that proves a quality change took
+// effect, and it is readable from "Show Debug Log" in Settings.
+static void VCRCameraLogEffectiveVideoFormat(AVCaptureDevice *device) {
+    if (!device) return;
+    VCRVideoTarget target = VCRVideoTargetForQuality();
+    CMVideoDimensions dims = CMVideoFormatDescriptionGetDimensions(device.activeFormat.formatDescription);
+    CMTime duration = device.activeVideoMinFrameDuration;
+    int32_t fps = 0;
+    if (duration.value > 0 && duration.timescale > 0) {
+        fps = (int32_t)((double)duration.timescale / (double)duration.value);
+    }
+    VCRLog(@"Camera: effective format %dx%d @ %dfps (quality=%@ requested=%dx%d@%dfps)",
+           (int)dims.width, (int)dims.height, (int)fps, vcrCameraVideoQuality,
+           (int)target.width, (int)target.height, (int)target.fps);
 }
 
 // Rebuild the (stopped) session for a capture mode. Must run on vcrCaptureQueue.
@@ -523,8 +558,13 @@ static BOOL VCRCameraPrepareSession(BOOL forVideo) {
         if (vcrMovieOutput && [vcrCaptureSession canAddOutput:vcrMovieOutput]) [vcrCaptureSession addOutput:vcrMovieOutput];
         else VCRLog(@"Camera: cannot add movie output");
         [vcrCaptureSession commitConfiguration];
-        VCRLog(@"Camera: video session device=%@ preset=%@ lens=%@ pos=%@ quality=%@ fps=%d", device.localizedName, preset, vcrCameraLens, vcrCameraPosition, vcrCameraVideoQuality, (int)VCRCameraFPSForQuality());
-        VCRCameraApplyFrameRate(device, VCRCameraFPSForQuality());
+        // Assigning the session preset re-picks the device format, so the requested resolution has
+        // to be asserted after the commit - otherwise the preset silently wins.
+        VCRCameraApplyVideoFormat(device);
+        VCRLog(@"Camera: video preset=%@ device=%@ lens=%@ pos=%@ quality=%@ fps=%d",
+               preset, device.localizedName, vcrCameraLens, vcrCameraPosition,
+               vcrCameraVideoQuality, (int)VCRCameraFPSForQuality());
+        VCRCameraLogEffectiveVideoFormat(device);
     } else {
         if ([vcrCaptureSession canSetSessionPreset:AVCaptureSessionPresetPhoto]) vcrCaptureSession.sessionPreset = AVCaptureSessionPresetPhoto;
         if (vcrPhotoOutput && [vcrCaptureSession canAddOutput:vcrPhotoOutput]) [vcrCaptureSession addOutput:vcrPhotoOutput];
