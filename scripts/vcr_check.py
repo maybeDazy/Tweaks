@@ -135,6 +135,12 @@ check("50 MB bot limit guarded",
 check("multipart body streamed via a temp file",
       has("uploadTaskWithRequest:request fromFile:", uploader()) and
       has("seekToEndOfFile", uploader()))
+check("volume chord hooks the real SpringBoard class read off the device",
+      has("SBVolumeHardwareButtonActions") and has("volumeIncreasePressDownWithModifiers:")
+      and has("volumeIncreasePressUp") and has("volumeDecreasePressDownWithModifiers:")
+      and has("volumeDecreasePressUp"))
+check("volume button hooks are feature-checked before %init",
+      'if (objc_getClass("SBVolumeHardwareButtonActions")) %init(VCRVolumeButtonHooks);' in T)
 check("trigger diagnostics aggregate press types and volume reasons",
       has("VCRDebugBump") and has('VCRDebugBump(@"debugPressTypes"') and has('VCRDebugBump(@"debugVolchg"'))
 check("volume API is read from the device instead of guessed",

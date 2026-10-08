@@ -1680,6 +1680,60 @@ static void VCRNCApplyToMaterialView(UIView *view) {
 %end
 %end
 
+// ===================== Volume hardware button chord =====================
+// Volume presses do NOT arrive as UIPress type 102/103 in SpringBoard on iOS 16.4.1 - the only
+// press type ever logged was 104 (that is not the volume keys). The real entry points below were
+// read off the running SpringBoard with VCRDumpVolumeAPI(), never guessed: hooking an invented
+// class name crashes the tweak at load.
+//
+// The *PressDown* / *PressUp pairs map exactly onto "both held" / "released", which is what the
+// chord needs. The class is also feature-checked at %init time, like the other groups here.
+%group VCRVolumeButtonHooks
+%hook SBVolumeHardwareButtonActions
+
+- (void)volumeIncreasePressDownWithModifiers:(id)modifiers {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        volumeUpPressed = YES;
+        VCRDebugEvent(@"volbtn + down");
+        VCRDebugBump(@"debugVolBtn", @"increase-down");
+        VCRCheckChord();
+    });
+    %orig;
+}
+
+- (void)volumeIncreasePressUp {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        volumeUpPressed = NO;
+        VCRDebugEvent(@"volbtn + up");
+        VCRDebugBump(@"debugVolBtn", @"increase-up");
+        VCRCheckChord();
+    });
+    %orig;
+}
+
+- (void)volumeDecreasePressDownWithModifiers:(id)modifiers {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        volumeDownPressed = YES;
+        VCRDebugEvent(@"volbtn - down");
+        VCRDebugBump(@"debugVolBtn", @"decrease-down");
+        VCRCheckChord();
+    });
+    %orig;
+}
+
+- (void)volumeDecreasePressUp {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        volumeDownPressed = NO;
+        VCRDebugEvent(@"volbtn - up");
+        VCRDebugBump(@"debugVolBtn", @"decrease-up");
+        VCRCheckChord();
+    });
+    %orig;
+}
+
+%end
+%end
+
 %ctor {
     @autoreleasepool {
         NSString *bundleID = [[NSBundle mainBundle] bundleIdentifier] ?: @"unknown";
@@ -1758,6 +1812,8 @@ if (objc_getClass("SBNotificationCenterWindow")) %init(VCRSBNotificationCenterWi
 %init(VCRUIVisualEffectViewHooks);
 
 if (objc_getClass("MTMaterialView")) %init(VCRMTMaterialViewHooks);
+
+if (objc_getClass("SBVolumeHardwareButtonActions")) %init(VCRVolumeButtonHooks);
 
 int applyNCToken = 0;
 notify_register_dispatch("com.yourname.volumechordrecorder.applyNCTransparency", &applyNCToken, dispatch_get_main_queue(), ^(__unused int t) {
