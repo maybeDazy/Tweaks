@@ -35,6 +35,9 @@ static NSTimeInterval vcrLastNCTransparencyBurst = 0.0;
 static BOOL volumeUpPressed = NO;
 static BOOL volumeDownPressed = NO;
 static BOOL vcrChordPressed = NO;   // both buttons went down, even for a tap shorter than a tier
+// A simultaneous press is delivered as ONE UIPress of type 104 whose press-up callbacks for both
+// buttons arrive at the START of the press; the end of that event is its only real release.
+static BOOL vcrChordConsolidatedPress = NO;
 static NSTimer *holdTimer = nil;
 static NSTimer *maxRecordTimer = nil;
 static AVAudioRecorder *recorder = nil;
@@ -1674,6 +1677,9 @@ static void VCRNCApplyToMaterialView(UIView *view) {
             if (VCRPressTypeIsVolumeDown(type)) volumeDownPressed = YES;
             if (VCRPressTypeIsVolumeChord(type)) {
                 // Both buttons in one event: that is the chord, so treat it as both going down.
+                // A second consolidated press with no intervening end means the end was missed.
+                if (vcrChordConsolidatedPress) VCRResetChordState();
+                vcrChordConsolidatedPress = YES;
                 VCRDebugEvent(@"volbtn chord (consolidated press)");
                 volumeUpPressed = YES;
                 volumeDownPressed = YES;
@@ -1695,6 +1701,10 @@ static void VCRNCApplyToMaterialView(UIView *view) {
             if (VCRPressTypeIsVolumeUp(type)) volumeUpPressed = NO;
             if (VCRPressTypeIsVolumeDown(type)) volumeDownPressed = NO;
             if (VCRPressTypeIsVolumeChord(type)) {
+                // The real release of a consolidated press: the press-up callbacks already came and
+                // went at the start of the press, so this is where the hold ends and the tier is
+                // resolved.
+                vcrChordConsolidatedPress = NO;
                 volumeUpPressed = NO;
                 volumeDownPressed = NO;
             }
@@ -1710,6 +1720,7 @@ static void VCRNCApplyToMaterialView(UIView *view) {
     @try {
         VCRLog(@"pressesCancelled");
         VCRDebugEvent(@"pressesCancelled");
+        vcrChordConsolidatedPress = NO;
         volumeUpPressed = NO;
         volumeDownPressed = NO;
         VCRResetChordState();
@@ -1942,6 +1953,12 @@ static void VCRExceptionHandler(NSException *exception) {
 static void VCRVolumeButtonEvent(BOOL isIncrease, BOOL isDown) {
     dispatch_async(dispatch_get_main_queue(), ^{
         @try {
+            // While a consolidated press is in flight, the release it reports for both buttons is
+            // noise: honouring it would cancel the hold timer and no tier would ever be reached.
+            if (!isDown && vcrChordConsolidatedPress) {
+                VCRDebugEvent(@"volbtn release ignored (consolidated press in flight)");
+                return;
+            }
             if (isIncrease) {
                 volumeUpPressed = isDown;
                 VCRDebugEvent(isDown ? @"volbtn + down" : @"volbtn + up");
