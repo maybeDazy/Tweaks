@@ -193,16 +193,11 @@ check("the tweak catches its own exceptions and fatal signals",
       has("tweak fatal signal") and has("TWEAK CRASH"))
 # Device evidence: a simultaneous volume-up+down press arrives as ONE UIPress of type 104 - never
 # as 102/103 - and with releases for both buttons but no press-down, so the chord must accept it.
-# The consolidated press reports a release for both buttons at its START, so those releases must not
-# cancel the hold; the end of that same press is the release that resolves the tier.
-check("releases during a consolidated press are ignored",
-      has("volbtn release ignored (consolidated press in flight)"))
-check("a consolidated press is tracked and released",
-      has("vcrChordConsolidatedPress = YES") and has("vcrChordConsolidatedPress = NO")
-      and has("vcrChordConsolidatedPress) VCRResetChordState()"))
-check("the consolidated volume-chord press is handled",
-      has("VCRPressTypeIsVolumeChord") and has("VCR_PRESS_TYPE_VOLUME_CHORD")
-      and has("volbtn chord (consolidated press)"))
+# Type 104 is the power button on this device. Arming the chord from it made the tweak fire from the
+# power button, so the chord must only ever be armed by the two volume press types (or their hooks).
+check("the power button cannot arm the chord",
+      has("VCR_PRESS_TYPE_POWER 104") and has("press type=104 = power button, not the chord")
+      and (not has("vcrChordConsolidatedPress")))
 check("every volume hook counts itself before calling the original",
       has('VCRDebugBump(@"debugVolumeSelectors", @"increaseDown")')
       and has('VCRDebugBump(@"debugVolumeSelectors", @"decreaseUp")'))
