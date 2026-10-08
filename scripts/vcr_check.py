@@ -167,7 +167,7 @@ check("REC is announced only after the recording actually starts",
       order("startRecordingToOutputFileURL:", 'VCRShowNotification(@"VolumeChordRecorder", @"REC")') and
       has('VCRShowNotification(@"VolumeChordRecorder", @"Video failed")'))
 check("tweak decisions reach the prefs ring (the file log is sandbox-denied)",
-      has("VCRDebugEvent(msg);") and has('hasPrefix:@"NC transparency"'))
+      has("VCRDebugEvent(msg);") and has("VCRRingWorthy"))
 check("the prefs ring is long enough to hold a chord sequence", has("lines.count > 14"))
 check("prefs bundle records why Settings aborted",
       "NSSetUncaughtExceptionHandler" in MM and "PREFS CRASH" in MM)

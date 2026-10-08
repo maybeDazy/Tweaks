@@ -124,6 +124,22 @@ static void VCRAppendLogLine(NSString *msg) {
 
 static void VCRDebugEvent(NSString *msg);   // defined below; VCRLog mirrors into the same ring
 
+// Only the trigger/capture story belongs in the ring. The notification-center transparency code
+// logs once per view and per window ("Applying NC transparency to window ..."), which buried the
+// chord decisions and turned every one of those lines into a preferences write.
+static BOOL VCRRingWorthy(NSString *message) {
+    static NSArray<NSString *> *keywords = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        keywords = @[@"chord", @"Chord", @"Camera", @"camera", @"Record", @"record",
+                     @"press", @"Press", @"Telegram", @"telegram", @"PREFS CRASH", @"HUD"];
+    });
+    for (NSString *keyword in keywords) {
+        if ([message rangeOfString:keyword].location != NSNotFound) return YES;
+    }
+    return NO;
+}
+
 static void VCRLog(NSString *fmt, ...) {
     va_list args;
     va_start(args, fmt);
@@ -135,7 +151,7 @@ static void VCRLog(NSString *fmt, ...) {
     // read back is the preferences ring that "Show Debug Log" prints. The notification-center view
     // hooks fire for every touched view (hundreds of lines a minute), which would both drown the
     // ring and turn every one of them into a preferences write, so keep those out of the ring.
-    if (![msg hasPrefix:@"NC transparency"]) VCRDebugEvent(msg);
+    if (VCRRingWorthy(msg)) VCRDebugEvent(msg);
 }
 
 // Diagnostic recorder for trigger plumbing. File writes are silently denied by SpringBoard's
