@@ -195,8 +195,22 @@ check("the tweak catches its own exceptions and fatal signals",
 # as 102/103 - and with releases for both buttons but no press-down, so the chord must accept it.
 # Type 104 is the power button on this device. Arming the chord from it made the tweak fire from the
 # power button, so the chord must only ever be armed by the two volume press types (or their hooks).
+# The trigger path has to stay provable from one SSH read: the ring is overwritten within seconds and
+# the capture folder is invisible to a plain shell, so these keys carry the evidence instead.
+check("the trigger path keeps sticky per-attempt evidence",
+      has('VCRStickyNote(@"debugLastChordArmed"') and has('VCRStickyNote(@"debugLastChordRelease"')
+      and has('VCRStickyNote(@"debugLastAction"') and has('VCRStickyNote(@"debugLastCapture"'))
+check("every capture type reports its size",
+      has('(unsigned long long)[vcrAttributes fileSize]')
+      and has('path.lastPathComponent, (unsigned long)imageData.length')
+      and has('(unsigned long long)[vcrVideoAttributes fileSize]'))
+check("only volume presses reach the ring",
+      has("if (VCRPressTypeIsVolumeUp(type) || VCRPressTypeIsVolumeDown(type)) VCRLog(@\"press ended")
+      and has("VCRDebugBump(@\"debugOtherPresses\", @\"power\")"))
 check("the power button cannot arm the chord",
-      has("VCR_PRESS_TYPE_POWER 104") and has("press type=104 = power button, not the chord")
+      has("VCR_PRESS_TYPE_POWER 104")
+      and has("// The power button must never arm the chord")
+      and has('VCRDebugBump(@"debugOtherPresses", @"power")')
       and (not has("vcrChordConsolidatedPress")))
 check("every volume hook counts itself before calling the original",
       has('VCRDebugBump(@"debugVolumeSelectors", @"increaseDown")')

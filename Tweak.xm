@@ -208,6 +208,26 @@ static void VCRDebugEvent(NSString *msg) {
     CFPreferencesAppSynchronize(domain);
 }
 
+// Sticky per-attempt evidence. The ring above keeps 14 lines and is overwritten within seconds, and
+// the capture folder cannot be seen by a plain shell on this jailbreak, so the few facts that must
+// survive go into keys of their own.
+static NSString *VCRStickyTime(void) {
+    static NSDateFormatter *vcrStickyFormatter = nil;
+    static dispatch_once_t vcrStickyOnce;
+    dispatch_once(&vcrStickyOnce, ^{
+        vcrStickyFormatter = [NSDateFormatter new];
+        vcrStickyFormatter.dateFormat = @"HH:mm:ss.SSS";
+    });
+    return [vcrStickyFormatter stringFromDate:[NSDate date]];
+}
+
+static void VCRStickyNote(NSString *key, NSString *message) {
+    CFStringRef domain = (__bridge CFStringRef)VCRPrefsID;
+    NSString *value = [NSString stringWithFormat:@"%@ %@", VCRStickyTime(), message];
+    CFPreferencesSetAppValue((__bridge CFStringRef)key, (__bridge CFStringRef)value, domain);
+    CFPreferencesAppSynchronize(domain);
+}
+
 // Aggregates trigger plumbing into a "label=count label=count" string so a single prefs read can
 // prove which press types and which volume-change reasons actually arrive - the 8-line ring buffer
 // above is too short to answer that.
@@ -534,6 +554,8 @@ static void VCRUploadFinishedCapture(NSURL *fileURL) {
     // The size is what proves the capture really landed on disk: this path is not visible to a
     // plain shell on this jailbreak, so the number in the log is the only hard evidence.
     VCRLog(@"Recording finalised: %@ (%llu bytes)", url.path, (unsigned long long)[vcrAttributes fileSize]);
+    VCRStickyNote(@"debugLastCapture", [NSString stringWithFormat:@"audio %@ (%llu bytes)",
+                                        url.lastPathComponent, (unsigned long long)[vcrAttributes fileSize]]);
     VCRUploadFinishedCapture(url);
 }
 @end
@@ -854,6 +876,8 @@ static void VCRCameraStopRunning(void) {
         NSError *writeError = nil;
         if (imageData && [imageData writeToFile:path options:NSDataWritingAtomic error:&writeError]) {
             VCRLog(@"Camera photo saved: %@ (%lu bytes)", path, (unsigned long)imageData.length);
+            VCRStickyNote(@"debugLastCapture", [NSString stringWithFormat:@"photo %@ (%lu bytes)",
+                                                path.lastPathComponent, (unsigned long)imageData.length]);
             VCRUploadFinishedCapture([NSURL fileURLWithPath:path]);
             VCRShowNotification(@"VolumeChordRecorder", @"Photo");
         } else {
@@ -888,6 +912,11 @@ didFinishRecordingToOutputFileAtURL:(NSURL *)outputFileURL
         }
         if ([[NSFileManager defaultManager] moveItemAtURL:outputFileURL toURL:targetURL error:&moveError]) {
             VCRLog(@"Camera video saved: %@", target);
+            {
+                NSDictionary *vcrVideoAttributes = [[NSFileManager defaultManager] attributesOfItemAtPath:target error:nil];
+                VCRStickyNote(@"debugLastCapture", [NSString stringWithFormat:@"video %@ (%llu bytes)",
+                                                    targetURL.lastPathComponent, (unsigned long long)[vcrVideoAttributes fileSize]]);
+            }
             VCRShowNotification(@"VolumeChordRecorder", @"Video");
             VCRUploadFinishedCapture(targetURL);
         } else {
@@ -1055,12 +1084,18 @@ static void VCRCheckChord(void) {
         NSInteger stage = vcrChordStage;
         BOOL chordWasPressed = vcrChordPressed;   // read before the reset clears it
         VCRResetChordState();
+        if (chordWasPressed) {
+            VCRStickyNote(@"debugLastChordRelease", [NSString stringWithFormat:@"released stage=%ld recording=%d",
+                                                     (long)stage, (vcrCameraRecording || isRecording) ? 1 : 0]);
+            VCRDebugBump(@"debugChordCounts", [NSString stringWithFormat:@"release%ld", (long)stage]);
+        }
 
         // Stopping must never depend on how long the buttons were held. A quick tap used to do
         // nothing at all (stage stayed 0), which is exactly the "REC will not turn off" report.
         if (chordWasPressed && (vcrCameraRecording || isRecording)) {
             VCRLog(@"Chord release (stage %ld) -> STOP active recording", (long)stage);
             VCRDebugEvent(@"chord -> STOP");
+            VCRStickyNote(@"debugLastAction", @"stop (released while recording)");
             VCRStopAnyRecording();
             return;
         }
@@ -1072,13 +1107,18 @@ static void VCRCheckChord(void) {
             return;
         }
         if (cameraChord) {
-            if (stage == 1) { VCRLog(@"Chord tier 1 -> photo"); VCRTakePhoto(); return; }
-            if (stage == 2 || !audioChord) { VCRLog(@"Chord tier %ld -> video", (long)stage); VCRToggleVideoRecording(); return; }
+            if (stage == 1) { VCRLog(@"Chord tier 1 -> photo"); VCRStickyNote(@"debugLastAction", @"photo (tier 1)"); VCRTakePhoto(); return; }
+            if (stage == 2 || !audioChord) { VCRLog(@"Chord tier %ld -> video", (long)stage); VCRStickyNote(@"debugLastAction", @"video toggle"); VCRToggleVideoRecording(); return; }
             VCRLog(@"Chord tier 3 -> audio");
+            VCRStickyNote(@"debugLastAction", @"audio toggle (tier 3)");
             VCRToggleRecording();
             return;
         }
-        if (audioChord) { VCRLog(@"Chord (audio only) -> audio toggle"); VCRToggleRecording(); }
+        if (audioChord) {
+            VCRLog(@"Chord (audio only) -> audio toggle");
+            VCRStickyNote(@"debugLastAction", @"audio toggle (camera chord off)");
+            VCRToggleRecording();
+        }
         return;
     }
 
@@ -1087,6 +1127,9 @@ static void VCRCheckChord(void) {
     if (holdTimer || chordTimer2 || chordTimer3) return; // already counting
 
     NSTimeInterval tier = MAX(0.4, vcrHoldSeconds);
+    VCRStickyNote(@"debugLastChordArmed", [NSString stringWithFormat:@"armed hold=%.1fs cam=%d aud=%d up=%d down=%d",
+                                           tier, cameraChord, audioChord, volumeUpPressed, volumeDownPressed]);
+    VCRDebugBump(@"debugChordCounts", @"armed");
     VCRLog(@"Volume chord down; tiers at %.1fs photo / %.1fs video / %.1fs audio (cam=%d aud=%d)",
            tier, tier * 2.0, tier * 3.0, cameraChord, audioChord);
 
@@ -1668,13 +1711,18 @@ static void VCRNCApplyToMaterialView(UIView *view) {
             // Type 104 is not a documented volume type, so record what the press really is.
             NSString *detail = [press description] ?: @"?";
             if (detail.length > 110) detail = [detail substringToIndex:110];
-            VCRLog(@"press began type=%ld (state up=%d down=%d) %@", (long)type, volumeUpPressed, volumeDownPressed, detail);
+            // Only volume presses get a ring line: the power button is pressed far more often than
+            // the chord and its lines pushed every trigger event out of the 14-line buffer.
+            if (VCRPressTypeIsVolumeUp(type) || VCRPressTypeIsVolumeDown(type)) {
+                VCRLog(@"press began type=%ld (state up=%d down=%d) %@", (long)type, volumeUpPressed, volumeDownPressed, detail);
+            }
             VCRDebugBump(@"debugPressTypes", [NSString stringWithFormat:@"began%ld", (long)type]);
             if (VCRPressTypeIsVolumeUp(type)) volumeUpPressed = YES;
             if (VCRPressTypeIsVolumeDown(type)) volumeDownPressed = YES;
             if (VCRPressTypeIsPower(type)) {
-                // The power button must never arm the chord - firing from it is the bug.
-                VCRDebugEvent(@"press type=104 = power button, not the chord");
+                // The power button must never arm the chord - firing from it was the bug. Counted
+                // rather than logged: it is pressed constantly and would drown the ring.
+                VCRDebugBump(@"debugOtherPresses", @"power");
             }
         }
         VCRCheckChord();
@@ -1688,7 +1736,7 @@ static void VCRNCApplyToMaterialView(UIView *view) {
     @try {
         for (UIPress *press in presses) {
             NSInteger type = press.type;
-            VCRLog(@"press ended type=%ld", (long)type);
+            if (VCRPressTypeIsVolumeUp(type) || VCRPressTypeIsVolumeDown(type)) VCRLog(@"press ended type=%ld", (long)type);
             VCRDebugBump(@"debugPressTypes", [NSString stringWithFormat:@"ended%ld", (long)type]);
             if (VCRPressTypeIsVolumeUp(type)) volumeUpPressed = NO;
             if (VCRPressTypeIsVolumeDown(type)) volumeDownPressed = NO;
