@@ -18,6 +18,15 @@ PLIST_TEXT = open(PLIST_PATH, encoding="utf-8").read()
 checks = []
 
 
+def read_text(*parts):
+    """Read a repo file for a check; a missing file yields "" so the check reports a failure
+    instead of crashing the gate with a traceback that says nothing."""
+    path = os.path.join(ROOT, *parts)
+    if not os.path.exists(path):
+        return ""
+    return open(path, encoding="utf-8", errors="replace").read()
+
+
 def check(name, ok, detail=""):
     checks.append((name, bool(ok), detail))
 
@@ -127,7 +136,7 @@ check("uploader compiled into the tweak",
       "VolumeChordRecorder_FILES = Tweak.xm VCRTelegramUploader.m" in UP)
 check("uploader header included by the tweak", has('#import "VCRTelegramUploader.h"'))
 check("uploader header is C++-safe (Tweak.xm compiles as Objective-C++)",
-      'extern "C"' in open(os.path.join(ROOT, "VCRTelegramUploader.h"), encoding="utf-8").read())
+      'extern "C"' in read_text("VCRTelegramUploader.h"))
 check("uploader invoked from a capture completion point", has("VCRUploadFinishedCapture("))
 check("audio recorder delegate added (no completion callback before)",
       has("VCRRecorderDelegate") and has("recorder.delegate = vcrRecorderDelegate;"))
@@ -290,7 +299,7 @@ check("every %hook passes the original call through",
       "hook blocks=%d, without %%orig: %s" % (len(_hook_blocks), _swallow))
 
 # --- 5e. the device helper must not carry credentials ---
-_dev = open(os.path.join(ROOT, "scripts/vcr_device.py"), encoding="utf-8").read()
+_dev = read_text("scripts", "vcr_device.py")
 check("the device helper reads the password from the environment only",
       'os.environ.get("SSHPASS")' in _dev and "python -m pip install paramiko" in _dev)
 # Anchor on a non-identifier boundary, or the _PASSWORD intermediate matches too.
@@ -317,7 +326,7 @@ check("the preferences UI no longer exposes the removed NC options",
 def _code_lines(rel):
     """Comment-free lines: the scan must see string literals (that is where paths live) but not
     comments that merely mention the old prefix."""
-    src = open(os.path.join(ROOT, rel), encoding="utf-8").read()
+    src = read_text(rel)
     src = re.sub(r"/\*.*?\*/", "", src, flags=re.S)
     return [re.sub(r"//[^\n]*", "", ln) for ln in src.split("\n")]
 
@@ -331,15 +340,15 @@ check("jailbreak paths are resolved through the official jbroot() API",
       has("#include <roothide.h>") and 'jbroot(@"/var/mobile/Documents/VolumeChordRecorder")' in T)
 
 check("preferenceloader is not a hard dependency (it blocks installs where it is absent)",
-      "preferenceloader" not in open(os.path.join(ROOT, "control"), encoding="utf-8").read().split("Depends:")[1].split("\n")[0])
+      "preferenceloader" not in read_text("control").split("Depends:")[-1].split("\n")[0])
 check("the workflow copy in scripts/ matches the live workflow",
-      open(os.path.join(ROOT, "scripts/build_github_actions_with_telegram.yml"), encoding="utf-8").read()
-      == open(os.path.join(ROOT, ".github/workflows/build.yml"), encoding="utf-8").read(),
+      read_text("scripts", "build_github_actions_with_telegram.yml")
+      == read_text(".github", "workflows", "build.yml"),
       "edit .github/workflows/build.yml, then copy it over the scripts/ copy")
 
 # --- 5h. every hooked class must be on the device-verified allowlist ---
 _allow = set(l.split("#")[0].strip() for l in
-             open(os.path.join(ROOT, "scripts/hook_allowlist.txt"), encoding="utf-8").read().split("\n"))
+             read_text("scripts", "hook_allowlist.txt").split("\n"))
 _allow.discard("")
 _hooked = set(c for c, s, e, b in _hook_blocks)
 check("every hooked class is listed in scripts/hook_allowlist.txt",
@@ -349,17 +358,17 @@ check("an OS version helper exists because the tweak supports 15 through 17",
 
 check("docs/ORACLE.md documents the on-device diagnostic oracles",
       os.path.exists(os.path.join(ROOT, "docs/ORACLE.md")) and "debugVolumeAPI" in
-      open(os.path.join(ROOT, "docs/ORACLE.md"), encoding="utf-8").read())
+      read_text("docs", "ORACLE.md"))
 check("prefs reloads are coalesced and never run inline on the main thread",
       has("static void VCRSchedulePrefsReload") and has("vcrPendingPrefsReload") and
       order("static void VCRSchedulePrefsReload", "dispatch_get_global_queue") and
       "VCRSchedulePrefsReload();" in T)
 
 check("docs/COMPAT.md lists every hooked class",
-      all(c in open(os.path.join(ROOT, "docs/COMPAT.md"), encoding="utf-8").read()
+      all(c in read_text("docs", "COMPAT.md")
           for c, s, e, b in _hook_blocks))
 check("the README does not claim injection into apps (the filter is SpringBoard-only)",
-      "com.apple.UIKit" not in open(os.path.join(ROOT, "README_KR.md"), encoding="utf-8").read())
+      "com.apple.UIKit" not in read_text("README_KR.md"))
 
 # --- 6. packaging ---
 check("postinst is packaged (after-install hook or layout/DEBIAN/postinst)",
