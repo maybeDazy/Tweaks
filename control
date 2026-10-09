@@ -6,4 +6,4 @@ Description: SpringBoard-only voice recorder with three-finger swipe, settings, 
 Maintainer: yourname
 Author: yourname
 Section: Tweaks
-Depends: mobilesubstrate, preferenceloader
+Depends: mobilesubstrate

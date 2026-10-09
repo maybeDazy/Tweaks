@@ -330,6 +330,13 @@ check("no hardcoded jailbreak prefix (rootHide randomises the jbroot)",
 check("jailbreak paths are resolved through the official jbroot() API",
       has("#include <roothide.h>") and 'jbroot(@"/var/mobile/Documents/VolumeChordRecorder")' in T)
 
+check("preferenceloader is not a hard dependency (it blocks installs where it is absent)",
+      "preferenceloader" not in open(os.path.join(ROOT, "control"), encoding="utf-8").read().split("Depends:")[1].split("\n")[0])
+check("the workflow copy in scripts/ matches the live workflow",
+      open(os.path.join(ROOT, "scripts/build_github_actions_with_telegram.yml"), encoding="utf-8").read()
+      == open(os.path.join(ROOT, ".github/workflows/build.yml"), encoding="utf-8").read(),
+      "edit .github/workflows/build.yml, then copy it over the scripts/ copy")
+
 # --- 6. packaging ---
 check("postinst is packaged (after-install hook or layout/DEBIAN/postinst)",
       "after-install" in UP or os.path.exists(os.path.join(ROOT, "layout", "DEBIAN", "postinst")))

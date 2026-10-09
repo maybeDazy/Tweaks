@@ -1,4 +1,4 @@
-name: Build RootHide Theos Deb and Send Telegram
+name: Build VolumeChordRecorder debs (roothide + rootless)
 
 on:
   workflow_dispatch:
@@ -8,7 +8,10 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-
+    strategy:
+      fail-fast: false
+      matrix:
+        scheme: [ roothide, rootless ]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -42,7 +45,6 @@ jobs:
       - name: Verify RootHide Theos
         run: |
           echo "THEOS=$THEOS"
-          find "$THEOS" -iname "*roothide*" -print
           test -e "$THEOS/vendor/mod/roothide"
 
       - name: Ensure iPhoneOS SDK
@@ -55,20 +57,38 @@ jobs:
             ls -la "$THEOS/sdks"
           fi
 
-      - name: Build roothide package
+      - name: Build ${{ matrix.scheme }} package
         run: |
           make clean
-          make package THEOS_PACKAGE_SCHEME=roothide FINALPACKAGE=1
+          make package THEOS_PACKAGE_SCHEME=${{ matrix.scheme }} FINALPACKAGE=1
           ls -la packages
 
-      - name: Upload deb artifact
+      - name: Report control + postinst (evidence for docs/COMPAT.md)
+        run: |
+          DEB="$(ls -1 packages/*.deb | head -n 1)"
+          echo "--- dpkg-deb -f ---"
+          dpkg-deb -f "$DEB" Package Version Architecture Depends
+          echo "--- control archive ---"
+          rm -rf /tmp/ctl
+          dpkg-deb -e "$DEB" /tmp/ctl
+          ls -la /tmp/ctl
+          cat /tmp/ctl/postinst 2>/dev/null || true
+
+      - name: Upload ${{ matrix.scheme }} deb
         uses: actions/upload-artifact@v4
         with:
-          name: VolumeChordRecorder-roothide-deb
+          name: VolumeChordRecorder-${{ matrix.scheme }}-deb
           path: packages/*.deb
 
-      - name: Send deb to Telegram
-        if: success()
+  telegram:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: debs
+
+      - name: Send debs to Telegram
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -78,14 +98,12 @@ jobs:
             echo "Telegram secrets are not set. Skipping Telegram upload."
             exit 0
           fi
-          DEB_FILE="$(ls -1 packages/*.deb | head -n 1)"
-          if [ ! -f "$DEB_FILE" ]; then
-            echo "No deb file found."
-            exit 1
-          fi
-          CAPTION="VolumeChordRecorder roothide deb - ${GITHUB_REPOSITORY}@${GITHUB_SHA::7}"
-          curl -fS \
-            -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument" \
-            -F "chat_id=${TELEGRAM_CHAT_ID}" \
-            -F "caption=${CAPTION}" \
-            -F "document=@${DEB_FILE}"
+          for f in $(find debs -name '*.deb' | sort); do
+            echo "sending $f"
+            CAPTION="VolumeChordRecorder $(basename "$f") - ${GITHUB_REPOSITORY}@${GITHUB_SHA::7}"
+            curl -fS \
+              -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument" \
+              -F "chat_id=${TELEGRAM_CHAT_ID}" \
+              -F "caption=${CAPTION}" \
+              -F "document=@${f}"
+          done
