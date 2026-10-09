@@ -14,7 +14,7 @@
 - Notification Center Transparency
 - Live Current Screen Passthrough
 - CoverSheet/Poster/Wallpaper/UIView 전역 훅
-- com.apple.UIKit 전역 앱 주입
+- UIKit 전역 앱 주입(앱 프로세스 주입)
 
 빌드:
 ```bash
@@ -28,6 +28,19 @@ make package THEOS_PACKAGE_SCHEME=roothide FINALPACKAGE=1
 
 # VolumeChordRecorder - RootHide/Rootless Source
 
+## 지원 환경 (실측으로만 기록)
+
+| 탈옥 | 스킴 | iOS | 검증 |
+|---|---|---|---|
+| rootHide Bootstrap | `roothide` | 15.0~17.x | iPhone 14 Pro Max 16.4.1 로드·동작 확인 |
+| Dopamine 2 | `rootless` | 15.0~16.6.1 | 미검증(rootless 실기기 필요) |
+
+- 빌드는 같은 소스에서 스킴만 바꿉니다: `make package THEOS_PACKAGE_SCHEME=roothide|rootless FINALPACKAGE=1`
+- CI가 두 스킴 deb을 모두 만들어 artifact로 올립니다.
+- 자세한 매트릭스·훅 목록·경로 규칙·공식 문서 출처: `docs/COMPAT.md`
+- 기기 진단 방법(무엇을 읽고 어떻게 판정하는가): `docs/ORACLE.md`
+
+
 세 손가락으로 아래로 스와이프하면 녹음을 시작/종료하는 Theos 트윅 예제입니다. 볼륨 업 + 볼륨 다운 조합은 설정에서 선택적으로 다시 켤 수 있습니다.
 
 
@@ -35,7 +48,8 @@ make package THEOS_PACKAGE_SCHEME=roothide FINALPACKAGE=1
 
 - 기본 트리거를 `Three-Finger Swipe Down`으로 변경했습니다.
 - 기존 `Volume Up + Down Trigger`는 기본 OFF이며, 설정 앱에서 다시 켤 수 있습니다.
-- 앱 안에서도 세 손가락 제스처를 감지할 수 있게 `com.apple.UIKit` 주입 필터를 추가했습니다.
+- 이 트윅은 **SpringBoard 전용**입니다(`Filter = Bundles: com.apple.springboard`). 앱 내부에서는
+  주입되지 않으므로 제스처를 감지하지 않습니다 - 부팅 사슬에 관여하지 않고, 다른 앱을 멈추게 할 수 없다는 뜻입니다.
 - 실제 녹음은 SpringBoard에서만 실행되고, 앱 프로세스는 Darwin notification으로 SpringBoard에 토글 요청만 보냅니다.
 - Dopamine2 RootHide/Bootstrap 환경에서 특정 앱 내부 제스처가 안 먹으면 Bootstrap App List에서 해당 앱의 tweak injection을 켜야 할 수 있습니다.
 - iOS의 세 손가락 편집/접근성 제스처와 충돌하면 `Swipe Distance` 값을 180~220 정도로 올리거나, 필요한 앱에서만 주입을 조절하세요.

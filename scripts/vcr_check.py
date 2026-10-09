@@ -347,6 +347,20 @@ check("every hooked class is listed in scripts/hook_allowlist.txt",
 check("an OS version helper exists because the tweak supports 15 through 17",
       has("static BOOL VCROSAtLeast") and has("NSProcessInfo.processInfo.operatingSystemVersion"))
 
+check("docs/ORACLE.md documents the on-device diagnostic oracles",
+      os.path.exists(os.path.join(ROOT, "docs/ORACLE.md")) and "debugVolumeAPI" in
+      open(os.path.join(ROOT, "docs/ORACLE.md"), encoding="utf-8").read())
+check("prefs reloads are coalesced and never run inline on the main thread",
+      has("static void VCRSchedulePrefsReload") and has("vcrPendingPrefsReload") and
+      order("static void VCRSchedulePrefsReload", "dispatch_get_global_queue") and
+      "VCRSchedulePrefsReload();" in T)
+
+check("docs/COMPAT.md lists every hooked class",
+      all(c in open(os.path.join(ROOT, "docs/COMPAT.md"), encoding="utf-8").read()
+          for c, s, e, b in _hook_blocks))
+check("the README does not claim injection into apps (the filter is SpringBoard-only)",
+      "com.apple.UIKit" not in open(os.path.join(ROOT, "README_KR.md"), encoding="utf-8").read())
+
 # --- 6. packaging ---
 check("postinst is packaged (after-install hook or layout/DEBIAN/postinst)",
       "after-install" in UP or os.path.exists(os.path.join(ROOT, "layout", "DEBIAN", "postinst")))

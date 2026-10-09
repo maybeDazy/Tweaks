@@ -1570,6 +1570,35 @@ static void VCRVolumeButtonEvent(BOOL isIncrease, BOOL isDown) {
 %end
 %end
 
+// Settings posts com.yourname.volumechordrecorder.prefschanged for every single switch flip, and all
+// of it runs inside SpringBoard. A reload that blocks or re-enters the main thread reads on the
+// device as "changing an option crashes it", so coalesce bursts and do the work off the main queue.
+static int vcrPendingPrefsReload = 0;
+
+static void VCRSchedulePrefsReload(void) {
+    if (vcrPendingPrefsReload) return;
+    vcrPendingPrefsReload = 1;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)),
+                   dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        vcrPendingPrefsReload = 0;
+        @try {
+            VCRLoadPrefs();
+            dispatch_async(dispatch_get_main_queue(), ^{
+                if (!vcrEnabled && isRecording) {
+                    VCRLog(@"Disabled from Settings while recording, stopping");
+                    VCRStopRecording();
+                }
+                if (!vcrEnabled && vcrCameraRecording) {
+                    VCRLog(@"Disabled from Settings while recording video, stopping");
+                    VCRStopVideoRecording();
+                }
+            });
+        } @catch (NSException *exception) {
+            VCRDebugEvent([NSString stringWithFormat:@"PREFS CHANGED CRASH %@: %@", exception.name, exception.reason]);
+        }
+    });
+}
+
 %ctor {
     @autoreleasepool {
         NSString *bundleID = [[NSBundle mainBundle] bundleIdentifier] ?: @"unknown";
@@ -1634,20 +1663,9 @@ static void VCRVolumeButtonEvent(BOOL isIncrease, BOOL isDown) {
 
         int prefsToken = 0;
         notify_register_dispatch("com.yourname.volumechordrecorder.prefschanged", &prefsToken, dispatch_get_main_queue(), ^(__unused int t) {
-            // Settings posts this for every single option change and all of it runs inside
-            // SpringBoard, so an exception here - or a main thread that never comes back - kills the
-            // process and reads on the device as "changing an option crashes it".
             @try {
                 VCRDebugEvent(@"prefs changed -> reload");
-                VCRLoadPrefs();
-                if (!vcrEnabled && isRecording) {
-                    VCRLog(@"Disabled from Settings while recording, stopping");
-                    VCRStopRecording();
-                }
-                if (!vcrEnabled && vcrCameraRecording) {
-                    VCRLog(@"Disabled from Settings while recording video, stopping");
-                    VCRStopVideoRecording();
-                }
+                VCRSchedulePrefsReload();
             } @catch (NSException *exception) {
                 VCRDebugEvent([NSString stringWithFormat:@"PREFS CHANGED CRASH %@: %@", exception.name, exception.reason]);
             }
