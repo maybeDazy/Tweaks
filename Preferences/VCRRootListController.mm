@@ -1,4 +1,6 @@
 #import <UIKit/UIKit.h>
+#include <spawn.h>      // posix_spawn/waitpid below
+#include <sys/wait.h>
 #include <roothide.h>   // jbroot() for the random rootHide jbroot
 #import <Preferences/PSListController.h>
 #import <Preferences/PSSpecifier.h>
@@ -531,26 +533,29 @@ __attribute__((constructor)) static void VCRPrefsInstallExceptionHandler(void) {
 // never exist there and the old absolute-path hunt silently failed (the Respring button did nothing).
 // jbroot() resolves the live prefix at runtime and compiles to an empty stub for rootless/rootful,
 // which is the officially documented way to reach bootstrap tools (roothide/Developer interface.md).
+static BOOL VCRFileExists(const char *path) {
+    return [[NSFileManager defaultManager] fileExistsAtPath:[NSString stringWithUTF8String:path]];
+}
+
 static int VCRRunTool(const char *jbrootPath, char * const argv[]) {
     const char *path = jbroot(jbrootPath);
     if (!VCRFileExists(path)) return ENOENT;
     pid_t pid = 0;
     int status = 0;
     int rc = posix_spawn(&pid, path, NULL, NULL, argv, NULL);
-    if (rc != 0 || pid <= 0) return rc ?: -1;
+    if (rc != 0 || pid <= 0) return rc != 0 ? rc : -1;
     waitpid(pid, &status, 0);
     return WIFEXITED(status) ? WEXITSTATUS(status) : status;
 }
 
-static BOOL VCRFileExists(const char *path) {
-    return [[NSFileManager defaultManager] fileExistsAtPath:[NSString stringWithUTF8String:path]];
-}
 
 - (void)vcrDoRespring {
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         NSMutableString *attempts = [NSMutableString string];
-        char * const sbreloadArgs[] = {(char *)"sbreload", NULL};
-        char * const killallArgs[] = {(char *)"killall", (char *)"-9", (char *)"SpringBoard", NULL};
+        // argv[0] stays the unconverted jbroot-based path and posix_spawn gets the resolved one, which
+        // is exactly the exec example in roothide/Developer/interface.md.
+        char * const sbreloadArgs[] = {(char *)"/usr/bin/sbreload", NULL};
+        char * const killallArgs[] = {(char *)"/usr/bin/killall", (char *)"-9", (char *)"SpringBoard", NULL};
 
         int rc = VCRRunTool("/usr/bin/sbreload", sbreloadArgs);
         [attempts appendFormat:@"jbroot(/usr/bin/sbreload): %d\n", rc];

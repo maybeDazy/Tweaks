@@ -1625,6 +1625,12 @@ static void VCRSchedulePrefsReload(void) {
         CFStringRef vcrDomain = CFSTR("com.yourname.volumechordrecorder");
         CFPreferencesSetAppValue(CFSTR("debugLastLoadBundle"), (__bridge CFStringRef)bundleID, vcrDomain);
         CFPreferencesSetAppValue(CFSTR("debugLastLoadTime"), (__bridge CFStringRef)[[NSDate date] description], vcrDomain);
+        CFPreferencesSetAppValue(CFSTR("debugOSVersion"),
+                                 (__bridge CFStringRef)NSProcessInfo.processInfo.operatingSystemVersionString, vcrDomain);
+        // The compatibility matrix only covers what a device actually reported, so record which OS build
+        // this process is on. debugOSAtLeast16 also exercises the version helper, which exists so that
+        // version-dependent fixes have somewhere to live instead of guessing that 15 and 17 behave alike.
+        CFPreferencesSetAppValue(CFSTR("debugOSAtLeast16"), VCROSAtLeast(16, 0) ? CFSTR("1") : CFSTR("0"), vcrDomain);
         CFPreferencesAppSynchronize(vcrDomain);
 
         if (![bundleID isEqualToString:@"com.apple.springboard"]) return;

@@ -78,7 +78,9 @@ jobs:
           echo "--- dylib platform info (best effort) ---"
           rm -rf /tmp/payload
           dpkg-deb -x "$DEB" /tmp/payload
-          (otool -l /tmp/payload/usr/lib/TweakInject/VolumeChordRecorder.dylib 2>/dev/null || llvm-otool -l /tmp/payload/usr/lib/TweakInject/VolumeChordRecorder.dylib 2>/dev/null) | grep -A4 LC_BUILD_VERSION || echo "(no otool on this runner; minos is verified on the device instead)"
+          DYLIB="$(find /tmp/payload -name 'VolumeChordRecorder.dylib' | head -n 1)"
+          echo "dylib in payload: ${DYLIB#/tmp/payload}  <- install prefix differs per scheme (rootless = var/jb)"
+          (otool -l "$DYLIB" 2>/dev/null || llvm-otool -l "$DYLIB" 2>/dev/null) | grep -A4 LC_BUILD_VERSION || echo "(no otool on this runner; minos is verified on the device instead)"
 
       - name: Upload ${{ matrix.scheme }} deb
         uses: actions/upload-artifact@v4
