@@ -364,6 +364,19 @@ static void VCRLoadPrefs(void) {
            vcrHoldSeconds, vcrMaxRecordSeconds, vcrHaptics, vcrLogPresses, vcrLogGestures);
 }
 
+// Private SpringBoard internals drift between iOS builds, and this tweak targets 15 through 17.
+// Never assume a private selector exists on the running OS: ask. (Guarded hook installation already
+// uses objc_getClass; this is for behaviour that has to differ per version.)
+static BOOL VCROSAtLeast(double major, double minor) {
+    static double version = 0.0;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        NSOperatingSystemVersion v = NSProcessInfo.processInfo.operatingSystemVersion;
+        version = (double)v.majorVersion + (double)v.minorVersion / 10.0;
+    });
+    return version >= (major + minor / 10.0);
+}
+
 static void VCRPlayHaptic(SystemSoundID soundID) {
     if (!vcrHaptics) return;
     AudioServicesPlaySystemSound(soundID);

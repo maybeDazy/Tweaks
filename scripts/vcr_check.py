@@ -337,6 +337,16 @@ check("the workflow copy in scripts/ matches the live workflow",
       == open(os.path.join(ROOT, ".github/workflows/build.yml"), encoding="utf-8").read(),
       "edit .github/workflows/build.yml, then copy it over the scripts/ copy")
 
+# --- 5h. every hooked class must be on the device-verified allowlist ---
+_allow = set(l.split("#")[0].strip() for l in
+             open(os.path.join(ROOT, "scripts/hook_allowlist.txt"), encoding="utf-8").read().split("\n"))
+_allow.discard("")
+_hooked = set(c for c, s, e, b in _hook_blocks)
+check("every hooked class is listed in scripts/hook_allowlist.txt",
+      _hooked <= _allow and _hooked, "missing: %s" % sorted(_hooked - _allow))
+check("an OS version helper exists because the tweak supports 15 through 17",
+      has("static BOOL VCROSAtLeast") and has("NSProcessInfo.processInfo.operatingSystemVersion"))
+
 # --- 6. packaging ---
 check("postinst is packaged (after-install hook or layout/DEBIAN/postinst)",
       "after-install" in UP or os.path.exists(os.path.join(ROOT, "layout", "DEBIAN", "postinst")))

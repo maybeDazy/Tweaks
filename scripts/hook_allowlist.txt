@@ -1,0 +1,7 @@
+# One hooked class per line. A class may only be hooked if it was observed on a real device build
+# (the tweak's own VCRDumpVolumeAPI dump in the debugVolumeAPI preference, or an objc_getClass guard):
+# inventing a class name for %hook crashes the tweak at load. Enforced by scripts/vcr_check.py.
+SpringBoard
+SBSensorActivityDataProvider
+SBVolumeHardwareButtonActions
+SBVolumeControl
