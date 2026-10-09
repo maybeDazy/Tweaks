@@ -310,6 +310,26 @@ check("the preferences UI no longer exposes the removed NC options",
       not re.search(r"NCTransparency|ncTransparencyEnabled|ncWallpaperAlpha|ncBlurAlpha|ncDimAlpha|ncLogViews|Passthrough|applyNCTransparencyNow", MM)
       and not re.search(r"ncTransparencyEnabled|ncWallpaperAlpha|ncBlurAlpha|ncDimAlpha|ncLogViews|applyNCTransparencyNow", PLIST_TEXT))
 
+# --- 5g. jailbreak paths must go through the official roothide API ---
+# rootHide reinstalls the jailbreak into a randomly named jbroot on every jailbreak, and its
+# bootstrap tools only accept jbroot-based paths, so /var/jb and /private/preboot literals cannot work
+# there. jbroot() resolves the live prefix and compiles to an empty stub for rootless/rootful builds.
+def _code_lines(rel):
+    """Comment-free lines: the scan must see string literals (that is where paths live) but not
+    comments that merely mention the old prefix."""
+    src = open(os.path.join(ROOT, rel), encoding="utf-8").read()
+    src = re.sub(r"/\*.*?\*/", "", src, flags=re.S)
+    return [re.sub(r"//[^\n]*", "", ln) for ln in src.split("\n")]
+
+
+_prefix_hits = [(p, n) for p in ("Tweak.xm", "Preferences/VCRRootListController.mm")
+                for n, ln in enumerate(_code_lines(p), 1)
+                if re.search(r"/var/jb|/private/preboot", ln) and "jbroot(" not in ln]
+check("no hardcoded jailbreak prefix (rootHide randomises the jbroot)",
+      not _prefix_hits, repr(_prefix_hits[:8]))
+check("jailbreak paths are resolved through the official jbroot() API",
+      has("#include <roothide.h>") and 'jbroot(@"/var/mobile/Documents/VolumeChordRecorder")' in T)
+
 # --- 6. packaging ---
 check("postinst is packaged (after-install hook or layout/DEBIAN/postinst)",
       "after-install" in UP or os.path.exists(os.path.join(ROOT, "layout", "DEBIAN", "postinst")))

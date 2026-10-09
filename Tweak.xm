@@ -7,6 +7,7 @@
 #import <string.h>
 #import "VCRTelegramUploader.h"
 #include <signal.h>
+#include <roothide.h>   // jbroot(): the live rootHide jbroot; an empty stub for rootless/rootful builds
 #include <fcntl.h>
 #include <unistd.h>
 static NSString * const VCRPrefsID = @"com.yourname.volumechordrecorder";
@@ -478,7 +479,7 @@ static NSString *VCRRecordingDirectory(void) {
         NSArray<NSString *> *candidates = @[
             @"/var/mobile/Media/VolumeChordRecorder",
             @"/var/mobile/Documents/VolumeChordRecorder",
-            @"/var/jb/var/mobile/Documents/VolumeChordRecorder",
+            jbroot(@"/var/mobile/Documents/VolumeChordRecorder"),   // rootHide: real path; rootless: stub
             @"/private/var/tmp/VolumeChordRecorder",
         ];
         NSFileManager *manager = [NSFileManager defaultManager];

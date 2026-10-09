@@ -1,4 +1,5 @@
 #import <UIKit/UIKit.h>
+#include <roothide.h>   // jbroot() for the random rootHide jbroot
 #import <Preferences/PSListController.h>
 #import <Preferences/PSSpecifier.h>
 #import <AudioToolbox/AudioToolbox.h>
@@ -526,28 +527,19 @@ __attribute__((constructor)) static void VCRPrefsInstallExceptionHandler(void) {
     });
 }
 
-static int VCRSpawnCommand(const char *path, char * const argv[]) {
+// rootHide keeps the bootstrap in a randomly named jbroot, so /var/jb/... and /private/preboot/...
+// never exist there and the old absolute-path hunt silently failed (the Respring button did nothing).
+// jbroot() resolves the live prefix at runtime and compiles to an empty stub for rootless/rootful,
+// which is the officially documented way to reach bootstrap tools (roothide/Developer interface.md).
+static int VCRRunTool(const char *jbrootPath, char * const argv[]) {
+    const char *path = jbroot(jbrootPath);
+    if (!VCRFileExists(path)) return ENOENT;
     pid_t pid = 0;
     int status = 0;
     int rc = posix_spawn(&pid, path, NULL, NULL, argv, NULL);
     if (rc != 0 || pid <= 0) return rc ?: -1;
     waitpid(pid, &status, 0);
-    if (WIFEXITED(status)) return WEXITSTATUS(status);
-    return status;
-}
-
-static int VCRSpawnProgram(const char *program, char * const argv[]) {
-    pid_t pid = 0;
-    int status = 0;
-    char * const envp[] = {
-        (char *)"PATH=/usr/bin:/bin:/usr/sbin:/sbin:/var/jb/usr/bin:/var/jb/bin:/private/preboot/jb/usr/bin:/private/preboot/jb/bin",
-        NULL
-    };
-    int rc = posix_spawnp(&pid, program, NULL, NULL, argv, envp);
-    if (rc != 0 || pid <= 0) return rc ?: -1;
-    waitpid(pid, &status, 0);
-    if (WIFEXITED(status)) return WEXITSTATUS(status);
-    return status;
+    return WIFEXITED(status) ? WEXITSTATUS(status) : status;
 }
 
 static BOOL VCRFileExists(const char *path) {
@@ -556,61 +548,21 @@ static BOOL VCRFileExists(const char *path) {
 
 - (void)vcrDoRespring {
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-        int rc = -1;
         NSMutableString *attempts = [NSMutableString string];
-
-        // Fast path: let PATH resolve sbreload in RootHide/rootless environments.
         char * const sbreloadArgs[] = {(char *)"sbreload", NULL};
-        rc = VCRSpawnProgram("sbreload", sbreloadArgs);
-        [attempts appendFormat:@"posix_spawnp(sbreload): %d\n", rc];
-        if (rc == 0) return;
-
-        // Absolute path attempts for environments where PATH is restricted.
-        const char *sbreloadPaths[] = {
-            "/usr/bin/sbreload",
-            "/var/jb/usr/bin/sbreload",
-            "/private/preboot/jb/usr/bin/sbreload",
-            "/private/preboot/procursus/usr/bin/sbreload",
-            NULL
-        };
-
-        for (int i = 0; sbreloadPaths[i] != NULL; i++) {
-            if (VCRFileExists(sbreloadPaths[i])) {
-                rc = VCRSpawnCommand(sbreloadPaths[i], sbreloadArgs);
-                [attempts appendFormat:@"%s: %d\n", sbreloadPaths[i], rc];
-                if (rc == 0) return;
-            } else {
-                [attempts appendFormat:@"%s: missing\n", sbreloadPaths[i]];
-            }
-        }
-
-        // Notify fallback. Some jailbreak setups listen for this restart notification.
-        notify_post("com.apple.springboard.restart");
-        notify_post("com.apple.SpringBoard.restart");
-        [attempts appendString:@"posted springboard restart notifications\n"];
-
-        // Last fallback: kill SpringBoard by PATH then absolute path.
         char * const killallArgs[] = {(char *)"killall", (char *)"-9", (char *)"SpringBoard", NULL};
-        rc = VCRSpawnProgram("killall", killallArgs);
-        [attempts appendFormat:@"posix_spawnp(killall): %d\n", rc];
+
+        int rc = VCRRunTool("/usr/bin/sbreload", sbreloadArgs);
+        [attempts appendFormat:@"jbroot(/usr/bin/sbreload): %d\n", rc];
         if (rc == 0) return;
 
-        const char *killallPaths[] = {
-            "/usr/bin/killall",
-            "/var/jb/usr/bin/killall",
-            "/private/preboot/jb/usr/bin/killall",
-            "/bin/killall",
-            NULL
-        };
-        for (int i = 0; killallPaths[i] != NULL; i++) {
-            if (VCRFileExists(killallPaths[i])) {
-                rc = VCRSpawnCommand(killallPaths[i], killallArgs);
-                [attempts appendFormat:@"%s: %d\n", killallPaths[i], rc];
-                if (rc == 0) return;
-            } else {
-                [attempts appendFormat:@"%s: missing\n", killallPaths[i]];
-            }
-        }
+        rc = VCRRunTool("/usr/bin/killall", killallArgs);
+        [attempts appendFormat:@"jbroot(/usr/bin/killall): %d\n", rc];
+        if (rc == 0) return;
+
+        // Some jailbreak setups restart SpringBoard from this Darwin notification alone.
+        notify_post("com.apple.springboard.restart");
+        [attempts appendString:@"posted com.apple.springboard.restart\n"];
 
         dispatch_async(dispatch_get_main_queue(), ^{
             NSString *message = [NSString stringWithFormat:@"Respring command failed. Last status: %d\n\nAttempts:\n%@\nTry running sbreload manually from NewTerm/SSH.", rc, attempts];
