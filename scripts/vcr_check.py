@@ -13,6 +13,7 @@ PLIST_PATH = os.path.join(ROOT, "Preferences", "Resources", "Root.plist")
 PLIST = plistlib.load(open(PLIST_PATH, "rb"))
 UP = open(os.path.join(ROOT, "Makefile"), encoding="utf-8").read()
 CELLS = [c for c in PLIST.get("items", PLIST) if isinstance(c, dict)]
+PLIST_TEXT = open(PLIST_PATH, encoding="utf-8").read()
 
 checks = []
 
@@ -225,8 +226,6 @@ check("no hook wraps %orig in an exception block",
 # Changing any option posts prefschanged, and that handler runs inside SpringBoard.
 check("the settings-changed handler is guarded and records its steps",
       has("prefs changed -> reload") and has("PREFS CHANGED CRASH"))
-check("the Notification Center re-apply cannot re-enter or storm the main thread",
-      has("vcrNCApplyInFlight") and has("vcrNCApplyAgain") and has("NC apply exception"))
 check("the finished capture reports its size",
       has("(unsigned long long)[vcrAttributes fileSize]"))
 check("the fatal-signal log is written where SpringBoard can write",
@@ -287,7 +286,7 @@ for _n, _ln in enumerate(T.split("\n"), 1):
         _cur = None
 _swallow = [(c, s) for c, s, e, body in _hook_blocks if "%orig" not in body]
 check("every %hook passes the original call through",
-      len(_hook_blocks) >= 12 and not _swallow,
+      len(_hook_blocks) >= 4 and not _swallow,
       "hook blocks=%d, without %%orig: %s" % (len(_hook_blocks), _swallow))
 
 # --- 5e. the device helper must not carry credentials ---
@@ -298,6 +297,18 @@ check("the device helper reads the password from the environment only",
 check("the device helper contains no password literal",
       not re.search(r'(?<![A-Za-z_])PASSWORD\s*=\s*[^_\s]', _dev)
       and not re.search(r'(?<![A-Za-z_])PASSWORD\s*=\s*[\'"]', _dev))
+
+# --- 5f. SafeNoNC: no Notification Center / UI-wide hook may ship ---
+# README_KR.md declares this build "SafeNoNC": the NC transparency / live passthrough hook surface was
+# removed because it caused boot and respring loops. The source drifted back into shipping it.
+_nc_lines = [n for n, ln in enumerate(T.split("\n"), 1)
+             if re.search(r"VCRNC|CSCoverSheet|MTMaterialView|UIVisualEffectView|SBDashBoard|SBNotificationCenter", ln)]
+check("the SafeNoNC build ships no Notification Center / UI-wide hooks",
+      not _nc_lines, "still present on lines: %s" % _nc_lines[:12])
+
+check("the preferences UI no longer exposes the removed NC options",
+      not re.search(r"NCTransparency|ncTransparencyEnabled|ncWallpaperAlpha|ncBlurAlpha|ncDimAlpha|ncLogViews|Passthrough|applyNCTransparencyNow", MM)
+      and not re.search(r"ncTransparencyEnabled|ncWallpaperAlpha|ncBlurAlpha|ncDimAlpha|ncLogViews|applyNCTransparencyNow", PLIST_TEXT))
 
 # --- 6. packaging ---
 check("postinst is packaged (after-install hook or layout/DEBIAN/postinst)",
