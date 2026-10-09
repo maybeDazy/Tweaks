@@ -28,6 +28,19 @@ make package THEOS_PACKAGE_SCHEME=roothide FINALPACKAGE=1
 
 # VolumeChordRecorder - RootHide/Rootless Source
 
+## 비활성화 / 롤백 (dpkg --purge 금지)
+
+문제가 생기면 파일을 옮겨서 끄고, 원인이 확인되면 되돌립니다.
+
+```bash
+# 끄기 (rootHide/rootless 공통 개념: 주입 목록에서 파일을 치우고 리스프링)
+mv /usr/lib/TweakInject/VolumeChordRecorder.dylib /usr/lib/TweakInject/VolumeChordRecorder.plist <백업디렉터리>/
+killall -9 SpringBoard
+
+# 되돌리기: 같은 파일을 원래 위치로
+```
+이전 빌드 deb은 CI artifact에 남아 있으니 필요하면 그 버전을 다시 설치합니다.
+
 ## 지원 환경 (실측으로만 기록)
 
 | 탈옥 | 스킴 | iOS | 검증 |
