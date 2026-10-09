@@ -290,6 +290,15 @@ check("every %hook passes the original call through",
       len(_hook_blocks) >= 12 and not _swallow,
       "hook blocks=%d, without %%orig: %s" % (len(_hook_blocks), _swallow))
 
+# --- 5e. the device helper must not carry credentials ---
+_dev = open(os.path.join(ROOT, "scripts/vcr_device.py"), encoding="utf-8").read()
+check("the device helper reads the password from the environment only",
+      'os.environ.get("SSHPASS")' in _dev and "python -m pip install paramiko" in _dev)
+# Anchor on a non-identifier boundary, or the _PASSWORD intermediate matches too.
+check("the device helper contains no password literal",
+      not re.search(r'(?<![A-Za-z_])PASSWORD\s*=\s*[^_\s]', _dev)
+      and not re.search(r'(?<![A-Za-z_])PASSWORD\s*=\s*[\'"]', _dev))
+
 # --- 6. packaging ---
 check("postinst is packaged (after-install hook or layout/DEBIAN/postinst)",
       "after-install" in UP or os.path.exists(os.path.join(ROOT, "layout", "DEBIAN", "postinst")))

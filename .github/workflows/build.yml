@@ -13,6 +13,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Static gate (vcr_check)
+        run: python3 scripts/vcr_check.py
+
       - name: Install apt dependencies
         run: |
           sudo apt update
