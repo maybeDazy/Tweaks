@@ -453,6 +453,10 @@ check("the Korean README describes the two-way chord, not a photo tier",
 check("the Korean README says photos are no longer captured",
       "어떤 제스처로도 찍히지 않습니다" in RM)
 
+check("the quick-press audio gesture is on by default, in code and in the bundle",
+      has('VCRBoolPref(@"volumeChordTrigger", YES)') and
+      (cell_for_key("volumeChordTrigger") or {}).get("default") is True)
+
 # --- 6. packaging ---
 check("postinst is packaged (after-install hook or layout/DEBIAN/postinst)",
       "after-install" in UP or os.path.exists(os.path.join(ROOT, "layout", "DEBIAN", "postinst")))

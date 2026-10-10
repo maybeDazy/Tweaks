@@ -90,7 +90,7 @@
 			<key>key</key>
 			<string>volumeChordTrigger</string>
 			<key>default</key>
-			<false/>
+			<true/>
 			<key>defaults</key>
 			<string>com.yourname.volumechordrecorder</string>
 			<key>PostNotification</key>

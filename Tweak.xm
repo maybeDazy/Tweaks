@@ -339,7 +339,8 @@ static void VCRLoadPrefs(void) {
     double rawHoldSeconds = VCRDoublePref(@"holdSeconds", 0.0, 0.0, 10.0);
     vcrHoldSeconds = rawHoldSeconds > 0.0 ? MAX(0.2, rawHoldSeconds) : 2.0;
     vcrMaxRecordSeconds = VCRDoublePref(@"maxRecordSeconds", 600.0, 5.0, 7200.0);
-    vcrVolumeChordTrigger = VCRBoolPref(@"volumeChordTrigger", NO);
+    // The quick-press audio gesture is the primary one now, so it is on unless switched off.
+vcrVolumeChordTrigger = VCRBoolPref(@"volumeChordTrigger", YES);
     vcrThreeFingerSwipeDownTrigger = VCRBoolPref(@"threeFingerSwipeDownTrigger", YES);
     vcrThreeFingerSwipeDistance = (CGFloat)VCRDoublePref(@"threeFingerSwipeDistance", 140.0, 60.0, 500.0);
     vcrLogGestures = VCRBoolPref(@"logGestures", NO);

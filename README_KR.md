@@ -119,7 +119,7 @@ Start/Stop Haptic Feedback: ON
 - 음성(오디오 녹음)은 `Volume Up + Down (Audio Recording)` 스위치가 켜져 있을 때만 동작합니다.
   카메라 조합과 오디오 조합이 서로를 가리지 않습니다. 카메라 조합이 꺼져 있으면 긴 홀드도 음성입니다.
 - 조합 트리거와 오디오 녹음용 볼륨 조합(`Volume Up + Down Trigger`)이 동시에 켜져 있으면
-  카메라가 우선합니다. 오디오 볼륨 조합은 기본 OFF이므로 평소에는 충돌하지 않습니다.
+  카메라가 우선합니다. 오디오 볼륨 조합은 기본 ON입니다(짧게 떼면 음성, 길게 홀드하면 영상이라 서로 겹치지 않습니다).
 - 설정 항목: Camera Capture Enabled / Trigger: Volume Up + Down / Trigger: 4-Finger Swipe /
   4-Finger Swipe Distance / Camera (Front/Back) / Lens (back camera) 1x·0.5x /
   Video Quality(카메라 앱처럼 해상도×fps 조합) / Hold Seconds / Use Microphone Channel in Video.
