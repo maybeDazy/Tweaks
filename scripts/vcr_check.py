@@ -27,6 +27,9 @@ def read_text(*parts):
     return open(path, encoding="utf-8", errors="replace").read()
 
 
+RM = read_text("README_KR.md")
+
+
 def check(name, ok, detail=""):
     checks.append((name, bool(ok), detail))
 
@@ -112,8 +115,7 @@ check("holdSeconds defaults to 2.0 and has no dead twin row",
       len([x for x in CELLS if isinstance(x, dict) and x.get("key") == "holdSeconds"]) == 1, repr(c))
 
 # --- 3. choice rows ---
-for key, want in [("cameraVideoQuality", 6), ("cameraPhotoQuality", 3),
-                  ("cameraPosition", 2), ("cameraLens", 2), ("hapticStrength", 3)]:
+for key, want in [("cameraVideoQuality", 6), ("cameraPosition", 2), ("cameraLens", 2), ("hapticStrength", 3)]:
     c = cell_for_key(key)
     check("choice row %s present with %d titles" % (key, want),
           c and c.get("vcrKind") == "choice" and len(c.get("vcrTitles", [])) == want
@@ -253,9 +255,10 @@ check("press hooks are wrapped in @try",
       has("press hook exception") and has("press cancel exception"))
 check("press type 104 is identified from the real press object",
       has("[press description]"))
-check("camera quality rows are real choice rows",
-      (cell_for_key("cameraVideoQuality") or {}).get("vcrKind") == "choice" and
-      (cell_for_key("cameraPhotoQuality") or {}).get("vcrKind") == "choice")
+check("the video quality row is a real choice row",
+      (cell_for_key("cameraVideoQuality") or {}).get("vcrKind") == "choice")
+check("the photo quality row is gone with the photo gesture",
+      cell_for_key("cameraPhotoQuality") is None)
 
 # --- 5c. chord trigger ported from the SneakyCam reverse engineering ---
 # SparkRecorder decides its chord from increaseLastPressed/decreaseLastPressed (a timestamp gap), not
@@ -427,6 +430,28 @@ check("a stop can be told apart from a start by feel alone",
 check("the settings bundle leaves a breadcrumb around every change",
       has("prefs set %@ = %@", MM) and has("done in %.0f ms", MM) and
       "NSSetUncaughtExceptionHandler" in MM)
+
+# --- 5j. chord mapping: quick press = audio, held past the setting = video, no photo ---
+check("a quick paired press toggles audio and a held one toggles video",
+      has("Chord released before Hold Seconds -> audio toggle") and
+      has("Chord %@ -> video toggle") and has("BOOL heldToTheThreshold = (stage >= 1)"))
+check("nothing reaches the photo capture any more",
+      "VCRTakePhoto();" not in T and has("__attribute__((unused))\nstatic void VCRTakePhoto"))
+check("one hold threshold drives the video gesture",
+      has("release before %.1fs = audio, hold past it = video") and
+      "chordTimer2" not in T and "chordTimer3" not in T)
+check("the 4-finger swipe down toggles audio instead of taking a photo",
+      has("Camera gesture swipe down -> audio toggle") and
+      has("Camera gesture swipe up -> video toggle"))
+check("the camera footer describes the two-way chord, not a photo tier",
+      "let go quickly" in read_text("Preferences", "Resources", "Root.plist") and
+      "Photo capture is no longer triggered" in read_text("Preferences", "Resources", "Root.plist"))
+
+check("the Korean README describes the two-way chord, not a photo tier",
+      "= Photo" not in RM and "Photo Quality." not in RM and
+      "넘겨서 떼면 = 영상" in RM and "안에 떼면   = 음성" in RM)
+check("the Korean README says photos are no longer captured",
+      "어떤 제스처로도 찍히지 않습니다" in RM)
 
 # --- 6. packaging ---
 check("postinst is packaged (after-install hook or layout/DEBIAN/postinst)",

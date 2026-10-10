@@ -72,7 +72,7 @@
 			<key>keyboard</key>
 			<string>decimal</string>
 			<key>label</key>
-			<string>Hold Seconds (tier length)</string>
+			<string>Hold Seconds (video threshold)</string>
 			<key>key</key>
 			<string>holdSeconds</string>
 			<key>default</key>
@@ -218,7 +218,7 @@
 			<key>label</key>
 			<string>Camera Capture</string>
 			<key>footerText</key>
-			<string>Volume Up + Volume Down chord, resolved by how long you hold it (Hold Seconds = one tier): release after 1 tier = photo, after 2 tiers = video start/stop, after 3 tiers = audio start/stop. A haptic tick fires as each tier unlocks, so you can feel which you will get. If a recording is already running the chord always means STOP, at any length. Capture is silent (no shutter/record sound) and files save next to the audio recordings. Use Microphone Channel decides whether video recordings carry an audio track (off = silent footage). The iOS privacy dot still appears while the camera is in use. Video formats mirror the Camera app; unsupported combinations fall back automatically.</string>
+		<string>Volume Up + Volume Down chord, two ways: press both together and let go quickly to start or stop an audio recording; keep holding for Hold Seconds (a haptic tick marks the moment) to start or stop video. While anything is recording the chord always means STOP, at any length. Photo capture is no longer triggered by any gesture in this build. Capture is silent and files save next to the audio recordings. Use Microphone Channel decides whether video carries an audio track (off = silent footage). The iOS privacy dot still appears while the camera is in use. Video formats mirror the Camera app and unsupported combinations fall back automatically.</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -381,36 +381,6 @@
 			<true/>
 			<key>defaults</key>
 			<string>com.yourname.volumechordrecorder</string>
-			<key>PostNotification</key>
-			<string>com.yourname.volumechordrecorder.prefschanged</string>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSLinkCell</string>
-			<key>label</key>
-			<string>Photo Quality</string>
-			<key>vcrKind</key>
-			<string>choice</string>
-			<key>key</key>
-			<string>cameraPhotoQuality</string>
-			<key>vcrKey</key>
-			<string>cameraPhotoQuality</string>
-			<key>defaults</key>
-			<string>com.yourname.volumechordrecorder</string>
-			<key>default</key>
-			<string>quality</string>
-			<key>vcrTitles</key>
-			<array>
-				<string>Prioritize Speed</string>
-				<string>Balanced</string>
-				<string>Best Quality</string>
-			</array>
-			<key>vcrValues</key>
-			<array>
-				<string>speed</string>
-				<string>balanced</string>
-				<string>quality</string>
-			</array>
 			<key>PostNotification</key>
 			<string>com.yourname.volumechordrecorder.prefschanged</string>
 		</dict>

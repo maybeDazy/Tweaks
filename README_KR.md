@@ -88,9 +88,9 @@ Start/Stop Haptic Feedback: ON
 - Three-Finger Swipe Down: 세 손가락 아래 스와이프로 녹음 시작/종료. 기본 ON
 - Swipe Distance: 세 손가락 스와이프 인식 거리. 기본 140
 - Volume Up + Down Trigger: 기존 볼륨 버튼 조합 트리거. 기본 OFF
-- Hold Seconds: 볼륨 버튼 조합을 켰을 때 동시에 누르고 있어야 하는 시간. 기본 2초
+- Hold Seconds: 이 시간을 넘겨 떼면 영상, 안에 떼면 음성. 기본 2초(0은 미설정으로 보고 2초)
 - Max Record Seconds: 최대 녹음 시간. 기본 600초
-- Haptic Feedback: 녹음 시작 시 강화 진동, 종료 시 강화 진동
+- Haptic Feedback: 시작은 1탭, 종료는 2탭(화면을 보지 않고 구분되도록)
 - Debug Gesture Logs: 세 손가락 제스처 디버그 로그 출력
 - Haptic When Capture Starts / Stops: 캡처 시작·정지 햅틱 개별 on/off. 기본 ON
 - Haptic Strength: Light / Medium / Strong. 기본 Medium
@@ -98,32 +98,31 @@ Start/Stop Haptic Feedback: ON
 - Show Recording Path: 녹음 저장 위치 표시
 - Respring: SpringBoard 재시작
 
-## 카메라 사진 / 영상 캡처 (볼륨 상키 + 하키 조합)
+## 영상 / 음성 캡처 (볼륨 상키 + 하키 조합)
 
 설정 앱 → Volume Chord Recorder → Camera Capture 에서 켭니다. 기본값은 ON입니다.
 
 ```text
-Hold Seconds = 1 티어 (기본 2초)
-  떼는 시점이 1티어(2~4초)  = Photo   (사진 1장)
-  떼는 시점이 2티어(4~6초)  = Video   (시작/정지 토글)
-  떼는 시점이 3티어(6초 이상) = Audio  (오디오 녹음 시작/정지 토글)
-  어느 티어든, 이미 녹화/녹음 중이면  = STOP
+동시에 눌렀다가 Hold Seconds 안에 떼면   = 음성 (오디오 녹음 시작/정지 토글)
+동시에 누르고 Hold Seconds 를 넘겨서 떼면 = 영상 (녹화 시작/정지 토글)
+어느 쪽이든, 이미 녹화/녹음 중이면         = STOP
 ```
 
 - **판정은 "떼는 순간"**입니다. 임계값에서 바로 실행하지 않으므로 긴 홀드가 두 동작을 연달아
   실행하는 일이 없습니다.
-- 티어를 넘을 때마다 햅틱 틱이 울려서 지금 몇 티어인지 손으로 알 수 있습니다.
+- Hold Seconds 를 넘는 순간 햅틱 틱이 한 번 울립니다 — 그때부터 떼면 영상입니다.
 - **정지는 길이를 맞출 필요가 없습니다.** 녹화/녹음이 돌고 있으면 짧게 떼도 STOP입니다
   (이전 버전은 정지하려고 떼면 사진이 찍히는 버그가 있었습니다).
-- 3티어(Audio)는 `Volume Up + Down (Audio Recording)` 스위치가 켜져 있을 때만 동작합니다.
-  카메라 조합과 오디오 조합이 서로를 가리지 않고 홀드 길이로 구분됩니다.
-- 조합 하나로 둘 다 쓰므로 별도 조합이 필요 없습니다. 4손가락 스와이프(아래=사진, 위=영상)도
-  옵션으로 남아 있고 기본은 OFF입니다.
+- **사진은 이 빌드에서 어떤 제스처로도 찍히지 않습니다.** 사진 촬영 코드는 되살릴 수 있게 남겨
+  두었지만 호출되는 곳이 없고, 설정에서도 Photo Quality 항목을 제거했습니다.
+  남은 4손가락 스와이프는 아래=음성, 위=영상 토글입니다(옵션, 기본 OFF).
+- 음성(오디오 녹음)은 `Volume Up + Down (Audio Recording)` 스위치가 켜져 있을 때만 동작합니다.
+  카메라 조합과 오디오 조합이 서로를 가리지 않습니다. 카메라 조합이 꺼져 있으면 긴 홀드도 음성입니다.
 - 조합 트리거와 오디오 녹음용 볼륨 조합(`Volume Up + Down Trigger`)이 동시에 켜져 있으면
   카메라가 우선합니다. 오디오 볼륨 조합은 기본 OFF이므로 평소에는 충돌하지 않습니다.
 - 설정 항목: Camera Capture Enabled / Trigger: Volume Up + Down / Trigger: 4-Finger Swipe /
   4-Finger Swipe Distance / Camera (Front/Back) / Lens (back camera) 1x·0.5x /
-  Video Quality(카메라 앱처럼 해상도×fps 조합) / Photo Quality.
+  Video Quality(카메라 앱처럼 해상도×fps 조합) / Hold Seconds / Use Microphone Channel in Video.
 
 ### 파일 열기 / 햅틱
 
@@ -134,10 +133,11 @@ Hold Seconds = 1 티어 (기본 2초)
   고를 수 있습니다.
 
 - 4손가락 스트림은 카메라 제스처가 전담하므로, 3손가락 녹음 토글과 충돌하지 않습니다.
-- 저장 위치는 오디오와 같은 폴더입니다: `/var/mobile/Media/VolumeChordRecorder/` (`.jpg`, `.mp4`).
+- 저장 위치는 오디오와 같은 폴더입니다: `/var/mobile/Media/VolumeChordRecorder/` (`.m4a`, `.mov`).
 - **무음**: `AVCapturePhotoOutput` / `AVCaptureMovieFileOutput`은 셔터음·녹화음을 스스로 재생하지 않습니다. 그 소리는 시스템 Camera 앱이 직접 트는 것이라, 트윅이 직접 찍으면 태생적으로 무음입니다. 별도 억제 코드가 필요 없습니다.
 - 영상에는 **오디오 트랙이 없습니다**(마이크 입력을 세션에 추가하지 않음) — 무음 영상입니다.
-- 사진은 `AVCaptureSessionPresetPhoto`, 영상은 `AVCaptureSessionPresetHigh`로 촬영 시점에 세션을 재구성합니다(AVCam 표준 패턴). 한 프리셋으로는 사진 화질과 영상 녹화를 동시에 만족할 수 없기 때문입니다.
+- 영상은 `AVCaptureSessionPresetHigh`로 촬영 시점에 세션을 구성합니다(AVCam 표준 패턴).
+  사진용 `AVCaptureSessionPresetPhoto` 경로는 남아 있지만 이 빌드에서는 호출되지 않습니다.
 - 카메라는 배타적 자원입니다. 다른 앱(카메라/영상통화)이 점유 중이면 캡처가 실패합니다. 세션은 캡처가 끝나면 즉시 stop 하므로 평상시 카메라를 붙잡지 않습니다.
 
 ### 현재 구현의 한계 (정직)
@@ -152,7 +152,7 @@ log stream --predicate 'eventMessage contains "VolumeChordRecorder"' --info
 ```text
 [VolumeChordRecorder] Camera TCC authorizationStatus=3   # 3 = Authorized
 [VolumeChordRecorder] Camera: session configured device=Back Camera
-[VolumeChordRecorder] Camera photo saved: /var/mobile/Media/VolumeChordRecorder/VCR_...jpg
+[VolumeChordRecorder] Camera video saved: /var/mobile/Media/VolumeChordRecorder/VCR_...mov
 ```
 
 `authorizationStatus`가 3이 아니면(0=NotDetermined,1=Restricted,2=Denied) SpringBoard에 카메라 권한이 없는 것이므로, 별도 경로(예: entitlement를 가진 헬퍼 데몬, 또는 TCC 우회)가 필요합니다.
