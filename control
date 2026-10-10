@@ -2,8 +2,9 @@ Package: com.yourname.volumechordrecorder
 Name: VolumeChordRecorder
 Version: 0.0.11
 Architecture: iphoneos-arm
-Description: SpringBoard-only recorder triggered by a volume up/down chord: photo, video with
- selectable quality, and audio capture, with hold-to-tune timing, a recordings manager, haptics,
+Description: SpringBoard-only recorder driven by a volume up/down chord: a quick press starts or
+ stops an audio recording, holding past the configured hold time starts or stops video with
+ selectable quality and an optional microphone channel. Includes a recordings manager, haptics,
  and optional upload to Telegram.
 Maintainer: yourname
 Author: yourname

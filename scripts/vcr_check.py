@@ -457,6 +457,11 @@ check("the quick-press audio gesture is on by default, in code and in the bundle
       has('VCRBoolPref(@"volumeChordTrigger", YES)') and
       (cell_for_key("volumeChordTrigger") or {}).get("default") is True)
 
+check("the packaged description does not advertise photo capture",
+      "photo" not in read_text("control").lower())
+check("the packaged description describes the two gestures",
+      "quick press" in read_text("control") and "holding past" in read_text("control"))
+
 # --- 6. packaging ---
 check("postinst is packaged (after-install hook or layout/DEBIAN/postinst)",
       "after-install" in UP or os.path.exists(os.path.join(ROOT, "layout", "DEBIAN", "postinst")))
