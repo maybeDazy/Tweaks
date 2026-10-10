@@ -6,13 +6,19 @@ and must not be quoted as working.
 
 ## Packaging matrix
 
-| Jailbreak | Scheme | iOS range | Arch in deb | Install prefix | Verified on |
-|---|---|---|---|---|---|
-| rootHide Bootstrap | `roothide` | 15.0-17.x | `iphoneos-arm64e` (observed in the deb filename and `dpkg-deb -f`) | random `jbroot` (never `/var/jb`) | iPhone 14 Pro Max, iOS 16.4.1 - tweak loads and writes its stamp |
-| Dopamine 2 | `rootless` | 15.0-16.6.1 | unverified - read it from the CI step "Report control + postinst" | `/var/jb` | unverified (no rootless device has been tested yet) |
+Measured on the CI run that built both schemes (run 38029929962, the "Report control + postinst"
+step) and on the device named in the last column. Toolchain SDK used for both: `iPhoneOS16.5.sdk`.
 
-One source builds both: `make package THEOS_PACKAGE_SCHEME=roothide FINALPACKAGE=1` and
-`THEOS_PACKAGE_SCHEME=rootless`. CI builds the matrix and uploads one artifact per scheme.
+| Jailbreak | Scheme | iOS range | Architecture (`dpkg-deb -f`) | Path inside the deb | Runtime prefix | Verified |
+|---|---|---|---|---|---|---|
+| rootHide Bootstrap | `roothide` | 15.0-17.x | `iphoneos-arm64e` | `/Library/MobileSubstrate/DynamicLibraries/VolumeChordRecorder.dylib` | random jbroot, reached with `jbroot()` (never a literal `/var/jb`) | built by CI; loads and writes its stamp on iPhone 14 Pro Max, iOS 16.4.1 |
+| Dopamine 2 | `rootless` | 15.0-16.6.1 | `iphoneos-arm64` | `/var/jb/Library/MobileSubstrate/DynamicLibraries/VolumeChordRecorder.dylib` | `/var/jb` | built by CI; **not yet installed on a rootless device** |
+
+Both debs declare `Depends: mobilesubstrate` only: ElleKit provides `mobilesubstrate (= 99)`, and a
+hard `preferenceloader` dependency would block installation on devices that do not have it.
+
+One source builds both: `make package THEOS_PACKAGE_SCHEME=roothide FINALPACKAGE=1` (or `rootless`).
+CI builds the matrix and uploads one artifact per scheme (here: 76,367 B roothide, 78,110 B rootless).
 
 ## Hook inventory
 
