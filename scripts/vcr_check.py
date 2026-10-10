@@ -87,7 +87,8 @@ check("target resolution table exists", has("VCRVideoTarget"))
 check("format applied after the movie output is added (preset no longer wins)",
       order("canAddOutput:vcrMovieOutput", "VCRCameraApplyVideoFormat(device);"))
 check("effective format is logged", has("Camera: video preset=") and has("Camera: effective format"))
-check("hold seconds floor is 0.2, not 0.0", 'VCRDoublePref(@"holdSeconds", 2.0, 0.2' in T)
+check("the hold can never be shorter than 0.2s (a stored 0 means unset, not the floor)",
+      has("MAX(0.2, rawHoldSeconds)") and has(": 2.0;") and has("rawHoldSeconds > 0.0"))
 
 # --- 2. slider row ---
 check("slider row dispatch present", has('"vcrKind"', MM))
@@ -101,10 +102,14 @@ check("didSelectRowAtIndexPath override present",
       has("- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath", MM))
 
 c = cell_for_key("holdSeconds")
-check("holdSeconds is a slider row", c and c.get("vcrKind") == "slider", repr(c))
-check("holdSeconds slider bounds 0.2..5.0",
-      c and float(c.get("vcrMin", 0)) == 0.2 and float(c.get("vcrMax", 0)) == 5.0, repr(c))
-check("holdSeconds is no longer a text cell", c and c.get("cell") != "PSEditTextCell", repr(c))
+# The slider row this replaced stored 0 for a control whose documented floor is 0.2 (measured on the
+# device) and the reported symptom was "there is no hold field at all", so the row is a plain numeric
+# field now - the same cell type that provably persists on this device (Swipe Distance = 200).
+check("holdSeconds is an editable numeric field", 
+      c is not None and c.get("cell") == "PSEditTextCell" and c.get("keyboard") == "decimal", repr(c))
+check("holdSeconds defaults to 2.0 and has no dead twin row",
+      c is not None and float(c.get("default", 0)) == 2.0 and
+      len([x for x in CELLS if isinstance(x, dict) and x.get("key") == "holdSeconds"]) == 1, repr(c))
 
 # --- 3. choice rows ---
 for key, want in [("cameraVideoQuality", 6), ("cameraPhotoQuality", 3),
@@ -248,11 +253,9 @@ check("press hooks are wrapped in @try",
       has("press hook exception") and has("press cancel exception"))
 check("press type 104 is identified from the real press object",
       has("[press description]"))
-check("camera quality rows and the hold slider are real prefs rows",
-      cell_for_key("cameraVideoQuality") is not None and cell_for_key("cameraPhotoQuality") is not None
-      and cell_for_key("holdSeconds") is not None and
+check("camera quality rows are real choice rows",
       (cell_for_key("cameraVideoQuality") or {}).get("vcrKind") == "choice" and
-      (cell_for_key("holdSeconds") or {}).get("vcrKind") == "slider")
+      (cell_for_key("cameraPhotoQuality") or {}).get("vcrKind") == "choice")
 
 # --- 5c. chord trigger ported from the SneakyCam reverse engineering ---
 # SparkRecorder decides its chord from increaseLastPressed/decreaseLastPressed (a timestamp gap), not
@@ -401,6 +404,29 @@ check("control file: continuation lines are indented and required fields are pre
       all(l.startswith(" ") for l in _ctrl_desc[1:]) and
       all(k + ":" in read_text("control") for k in
           ("Package", "Name", "Version", "Architecture", "Description", "Maintainer", "Author", "Section", "Depends")))
+
+# --- 5i. capture delegates, hold field, microphone option ---
+check("capture delegates are held strongly (AVFoundation does not retain them)",
+      has("static VCRPhotoCaptureDelegate *vcrPhotoDelegate") and
+      has("static VCRMovieRecordingDelegate *vcrMovieDelegate") and
+      has("delegate:vcrPhotoDelegate]") and has("recordingDelegate:vcrMovieDelegate]") and
+      "VCRPhotoCaptureDelegate *delegate = " not in T and "VCRMovieRecordingDelegate *delegate = " not in T,
+      "a local delegate is deallocated before the completion callback writes the file")
+check("the hold setting is a working field, not a dead row",
+      len([c for c in CELLS if isinstance(c, dict) and c.get("key") == "holdSeconds"]) == 1 and
+      [c for c in CELLS if isinstance(c, dict) and c.get("key") == "holdSeconds"][0].get("cell") == "PSEditTextCell")
+check("a stored hold of 0 falls back to the default instead of the shortest possible hold",
+      has("rawHoldSeconds > 0.0 ? MAX(0.2, rawHoldSeconds) : 2.0"))
+check("the microphone channel can be switched off for video",
+      any(c.get("key") == "cameraRecordAudio" for c in CELLS if isinstance(c, dict)) and
+      has("vcrCameraRecordAudio") and has("AVMediaTypeAudio") and
+      has("microphone channel disabled by preference"))
+check("a stop can be told apart from a start by feel alone",
+      order("static void VCRHapticStart", "static void VCRHapticStop") and
+      has("Two taps for a stop, one for a start"))
+check("the settings bundle leaves a breadcrumb around every change",
+      has("prefs set %@ = %@", MM) and has("done in %.0f ms", MM) and
+      "NSSetUncaughtExceptionHandler" in MM)
 
 # --- 6. packaging ---
 check("postinst is packaged (after-install hook or layout/DEBIAN/postinst)",

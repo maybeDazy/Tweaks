@@ -105,9 +105,16 @@ __attribute__((constructor)) static void VCRPrefsInstallExceptionHandler(void) {
 
 - (void)setPreferenceValue:(id)value specifier:(PSSpecifier *)specifier {
     NSString *key = [specifier propertyForKey:@"key"];
+    // Settings was reported to "abort" whenever any option is changed, yet no exception reaches the
+    // handler above and the tweak never sees a crash, so the failure is a stall or a kill rather than
+    // an exception. These two breadcrumbs make the next attempt self-diagnosing: if the ring ends on
+    // "prefs set" the write itself is where Settings died.
+    NSDate *started = [NSDate date];
+    VCRPrefsLog(@"prefs set %@ = %@", key, value);
     CFPreferencesSetAppValue((__bridge CFStringRef)key, (__bridge CFPropertyListRef)value, (__bridge CFStringRef)VCRPrefsID);
     CFPreferencesAppSynchronize((__bridge CFStringRef)VCRPrefsID);
     notify_post("com.yourname.volumechordrecorder.prefschanged");
+    VCRPrefsLog(@"prefs set %@ done in %.0f ms", key, -[started timeIntervalSinceNow] * 1000.0);
 }
 
 // ---- Custom rows -------------------------------------------------------------------------

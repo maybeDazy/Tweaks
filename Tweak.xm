@@ -54,6 +54,7 @@ static int vcrTelegramLatestToken = 0;
 static BOOL vcrCameraEnabled = NO;
 static BOOL vcrCameraChordTrigger = YES;
 static BOOL vcrCameraSwipeTrigger = NO;
+static BOOL vcrCameraRecordAudio = YES;   // microphone channel for video
 static CGFloat vcrCameraSwipeDistance = 140.0;
 static NSInteger vcrCameraFingerCount = 4;
 // Device/quality selection. String-valued prefs so the Settings lists round-trip cleanly
@@ -335,7 +336,10 @@ static void VCRLoadPrefs(void) {
     vcrEnabled = VCRBoolPref(@"enabled", YES);
     vcrHaptics = VCRBoolPref(@"haptics", YES);
     vcrLogPresses = VCRBoolPref(@"logPresses", NO);
-    vcrHoldSeconds = VCRDoublePref(@"holdSeconds", 2.0, 0.2, 10.0);
+    // A stored 0 is what the settings bundle writes for an empty field, and clamping it to the minimum
+    // made every tier (photo/video/audio) sit inside half a second, which is impossible to aim.
+    double rawHoldSeconds = VCRDoublePref(@"holdSeconds", 0.0, 0.0, 10.0);
+    vcrHoldSeconds = rawHoldSeconds > 0.0 ? MAX(0.2, rawHoldSeconds) : 2.0;
     vcrMaxRecordSeconds = VCRDoublePref(@"maxRecordSeconds", 600.0, 5.0, 7200.0);
     vcrVolumeChordTrigger = VCRBoolPref(@"volumeChordTrigger", NO);
     vcrThreeFingerSwipeDownTrigger = VCRBoolPref(@"threeFingerSwipeDownTrigger", YES);
@@ -345,6 +349,7 @@ static void VCRLoadPrefs(void) {
     vcrCameraChordTrigger = VCRBoolPref(@"cameraChordTrigger", YES);
     vcrCameraSwipeTrigger = VCRBoolPref(@"cameraSwipeTrigger", NO);
     vcrCameraSwipeDistance = (CGFloat)VCRDoublePref(@"cameraSwipeDistance", 140.0, 60.0, 500.0);
+    vcrCameraRecordAudio = VCRBoolPref(@"cameraRecordAudio", YES);
     vcrCameraPosition = VCRStringPref(@"cameraPosition", @"back");
     vcrCameraLens = VCRStringPref(@"cameraLens", @"wide");
     vcrCameraVideoQuality = VCRStringPref(@"cameraVideoQuality", @"1080p30");
@@ -397,7 +402,13 @@ static void VCRHapticStart(void) {
 
 static void VCRHapticStop(void) {
     if (!vcrHapticOnStop) return;
+    // Two taps for a stop, one for a start: the chord is used without looking at the screen, and the
+    // completion callback that fires this only started arriving after the delegate retention fix.
     VCRPlayHaptic(VCRHapticSoundID());
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.12 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        if (vcrHapticOnStop) VCRPlayHaptic(VCRHapticSoundID());
+    });
 }
 
 // Short tick fired as each chord tier unlocks, so you can feel which mode you are about to get.
@@ -840,6 +851,20 @@ static BOOL VCRCameraPrepareSession(BOOL forVideo) {
         vcrCaptureSession.sessionPreset = preset;
         if (vcrMovieOutput && [vcrCaptureSession canAddOutput:vcrMovieOutput]) [vcrCaptureSession addOutput:vcrMovieOutput];
         else VCRLog(@"Camera: cannot add movie output");
+        // Microphone channel: without an audio input the movie output records no audio track at all.
+        if (vcrCameraRecordAudio) {
+            AVCaptureDevice *mic = [AVCaptureDevice defaultDeviceWithMediaType:AVMediaTypeAudio];
+            NSError *micError = nil;
+            AVCaptureDeviceInput *micInput = mic ? [AVCaptureDeviceInput deviceInputWithDevice:mic error:&micError] : nil;
+            if (micInput && [vcrCaptureSession canAddInput:micInput]) {
+                [vcrCaptureSession addInput:micInput];
+                VCRLog(@"Camera: microphone channel in use (%@)", mic.localizedName);
+            } else {
+                VCRLog(@"Camera: microphone unavailable (%@)", micError);
+            }
+        } else {
+            VCRLog(@"Camera: microphone channel disabled by preference");
+        }
         [vcrCaptureSession commitConfiguration];
         // Assigning the session preset re-picks the device format, so the requested resolution has
         // to be asserted after the commit - otherwise the preset silently wins.
@@ -936,6 +961,13 @@ didFinishRecordingToOutputFileAtURL:(NSURL *)outputFileURL
 }
 @end
 
+// AVCapturePhotoOutput and AVCaptureFileOutput do NOT retain their delegate. These used to be locals
+// inside the enclosing block, so the delegate was deallocated while the capture was still running and
+// the completion callbacks (the ones that write the file) never arrived: photos were never saved and
+// the finished video was never moved out of the temporary directory.
+static VCRPhotoCaptureDelegate *vcrPhotoDelegate = nil;
+static VCRMovieRecordingDelegate *vcrMovieDelegate = nil;
+
 static void VCRTakePhoto(void) {
     if (!vcrEnabled || !vcrCameraEnabled) return;
     if (vcrCameraRecording) { VCRLog(@"Camera busy: video recording in progress"); return; }
@@ -955,12 +987,12 @@ static void VCRTakePhoto(void) {
     // "settings.photoQualityPrioritization must not be higher than self.maxPhotoQualityPrioritization",
     // and that exception used to take SpringBoard down with it.
     settings.photoQualityPrioritization = MIN(VCRCameraPhotoQualityValue(), vcrPhotoOutput.maxPhotoQualityPrioritization);
-    VCRPhotoCaptureDelegate *delegate = [VCRPhotoCaptureDelegate new];
+    vcrPhotoDelegate = [VCRPhotoCaptureDelegate new];
     dispatch_async(vcrCaptureQueue, ^{
         @try {
             if (VCRCameraPrepareSession(NO)) {
                 VCRCameraStartRunningSync();
-                [vcrPhotoOutput capturePhotoWithSettings:settings delegate:delegate];
+                [vcrPhotoOutput capturePhotoWithSettings:settings delegate:vcrPhotoDelegate];
             }
         } @catch (NSException *exception) {
             vcrCameraRecording = NO;
@@ -995,13 +1027,13 @@ static void VCRStartVideoRecording(void) {
     NSURL *tempURL = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:@"VCR_recording.mp4"]];
     [[NSFileManager defaultManager] removeItemAtURL:tempURL error:nil];
 
-    VCRMovieRecordingDelegate *delegate = [VCRMovieRecordingDelegate new];
+    vcrMovieDelegate = [VCRMovieRecordingDelegate new];
     vcrCameraRecording = YES;
     dispatch_async(vcrCaptureQueue, ^{
         @try {
             if (VCRCameraPrepareSession(YES)) {
                 VCRCameraStartRunningSync();
-                [vcrMovieOutput startRecordingToOutputFileURL:tempURL recordingDelegate:delegate];
+                [vcrMovieOutput startRecordingToOutputFileURL:tempURL recordingDelegate:vcrMovieDelegate];
                 dispatch_async(dispatch_get_main_queue(), ^{
                     VCRLog(@"Camera video recording started -> %@", path);
                     VCRShowNotification(@"VolumeChordRecorder", @"REC");

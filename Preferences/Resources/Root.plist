@@ -12,7 +12,7 @@
 			<key>label</key>
 			<string>Main</string>
 			<key>footerText</key>
-			<string>SpringBoard-only build. Three-Finger Swipe Down and optional Volume Up + Down toggle recording. Notification Center Transparency is available below and defaults OFF for stability.</string>
+		<string>SpringBoard-only build: one dylib is injected into SpringBoard only, so it cannot affect the boot chain or other apps. Three-Finger Swipe Down and the optional Volume Up + Down chord toggle recording. Built for rootHide Bootstrap (roothide) and Dopamine 2 (rootless) on iOS 15 to 17.</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -34,7 +34,7 @@
 			<key>label</key>
 			<string>Recording Trigger</string>
 			<key>footerText</key>
-			<string>Swipe down with three fingers anywhere the tweak is injected. In Dopamine2 RootHide, enable target apps in Bootstrap/App List if you want the gesture inside third-party apps. SpringBoard/Home Screen works from SpringBoard injection.</string>
+		<string>Swipe down with three fingers on the Home Screen and in SpringBoard UI. This tweak is injected into SpringBoard only, so the gesture does not exist inside third-party apps.</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -68,6 +68,22 @@
 		</dict>
 		<dict>
 			<key>cell</key>
+			<string>PSEditTextCell</string>
+			<key>keyboard</key>
+			<string>decimal</string>
+			<key>label</key>
+			<string>Hold Seconds (tier length)</string>
+			<key>key</key>
+			<string>holdSeconds</string>
+			<key>default</key>
+			<real>2.0</real>
+			<key>defaults</key>
+			<string>com.yourname.volumechordrecorder</string>
+			<key>PostNotification</key>
+			<string>com.yourname.volumechordrecorder.prefschanged</string>
+		</dict>
+		<dict>
+			<key>cell</key>
 			<string>PSSwitchCell</string>
 			<key>label</key>
 			<string>Volume Up + Down (Audio Recording)</string>
@@ -79,24 +95,6 @@
 			<string>com.yourname.volumechordrecorder</string>
 			<key>PostNotification</key>
 			<string>com.yourname.volumechordrecorder.prefschanged</string>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSLinkCell</string>
-			<key>label</key>
-			<string>Hold Seconds</string>
-			<key>vcrKind</key>
-			<string>slider</string>
-			<key>key</key>
-			<string>holdSeconds</string>
-			<key>vcrKey</key>
-			<string>holdSeconds</string>
-			<key>vcrDefault</key>
-			<real>2.0</real>
-			<key>vcrMin</key>
-			<real>0.2</real>
-			<key>vcrMax</key>
-			<real>5.0</real>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -220,7 +218,7 @@
 			<key>label</key>
 			<string>Camera Capture</string>
 			<key>footerText</key>
-			<string>Volume Up + Volume Down chord, resolved by how long you hold it (Hold Seconds = one tier): release after 1 tier = photo, after 2 tiers = video start/stop, after 3 tiers = audio start/stop. A haptic tick fires as each tier unlocks, so you can feel which you will get. If a recording is already running the chord always means STOP, at any length. Capture is silent (no shutter/record sound) and files save next to the audio recordings. The iOS privacy dot still appears while the camera is in use. Video formats mirror the Camera app; unsupported combinations fall back automatically.</string>
+			<string>Volume Up + Volume Down chord, resolved by how long you hold it (Hold Seconds = one tier): release after 1 tier = photo, after 2 tiers = video start/stop, after 3 tiers = audio start/stop. A haptic tick fires as each tier unlocks, so you can feel which you will get. If a recording is already running the chord always means STOP, at any length. Capture is silent (no shutter/record sound) and files save next to the audio recordings. Use Microphone Channel decides whether video recordings carry an audio track (off = silent footage). The iOS privacy dot still appears while the camera is in use. Video formats mirror the Camera app; unsupported combinations fall back automatically.</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -369,6 +367,20 @@
 				<string>4k60</string>
 				<string>auto</string>
 			</array>
+			<key>PostNotification</key>
+			<string>com.yourname.volumechordrecorder.prefschanged</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>label</key>
+			<string>Use Microphone Channel in Video</string>
+			<key>key</key>
+			<string>cameraRecordAudio</string>
+			<key>default</key>
+			<true/>
+			<key>defaults</key>
+			<string>com.yourname.volumechordrecorder</string>
 			<key>PostNotification</key>
 			<string>com.yourname.volumechordrecorder.prefschanged</string>
 		</dict>
