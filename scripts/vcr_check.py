@@ -370,6 +370,13 @@ check("docs/COMPAT.md lists every hooked class",
 check("the README does not claim injection into apps (the filter is SpringBoard-only)",
       "com.apple.UIKit" not in read_text("README_KR.md"))
 
+check("the package description does not advertise the removed Notification Center feature",
+      "Notification Center" not in read_text("control") and "transparency" not in read_text("control").lower())
+check("the build pins the SDK and the minimum iOS version the docs claim",
+      "clang:16.5:15.0" in UP and "latest" not in UP.split("TARGET =")[-1].split("\n")[0])
+check("the postinst resprings so the new build actually loads",
+      "killall -9 SpringBoard" in read_text("layout", "DEBIAN", "postinst"))
+
 # --- 6. packaging ---
 check("postinst is packaged (after-install hook or layout/DEBIAN/postinst)",
       "after-install" in UP or os.path.exists(os.path.join(ROOT, "layout", "DEBIAN", "postinst")))

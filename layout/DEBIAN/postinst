@@ -1,5 +1,12 @@
 #!/bin/sh
 # The legacy PreferenceLoader entry this used to delete is not shipped any more, and the script runs
 # with a different root per packaging scheme (rootfs / /var/jb / random jbroot), so path guessing is
-# removed entirely. Respringing is handled by theos through INSTALL_TARGET_PROCESSES (see Makefile).
+# removed entirely.
+#
+# Respring: theos did NOT append anything for INSTALL_TARGET_PROCESSES in this configuration (the
+# packaged maintainer script was checked), so without this the new build only takes effect at the
+# next reboot. `killall` is provided by the bootstrap on every scheme, so no jailbreak path is
+# hardcoded here. Without it the install looks successful but nothing changes on screen.
+killall -9 SpringBoard 2>/dev/null || true
+
 exit 0

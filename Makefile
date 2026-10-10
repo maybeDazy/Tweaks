@@ -1,6 +1,5 @@
 ARCHS = arm64 arm64e
-TARGET = iphone:clang:latest:14.0
-INSTALL_TARGET_PROCESSES = SpringBoard Preferences
+TARGET = iphone:clang:16.5:15.0   # pinned: CI used iPhoneOS16.5.sdk; matches the documented 15.0 floor
 
 # Build with:
 #   make package THEOS_PACKAGE_SCHEME=roothide FINALPACKAGE=1
