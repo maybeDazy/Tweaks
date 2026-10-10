@@ -377,6 +377,31 @@ check("the build pins the SDK and the minimum iOS version the docs claim",
 check("the postinst resprings so the new build actually loads",
       "killall -9 SpringBoard" in read_text("layout", "DEBIAN", "postinst"))
 
+# dpkg-deb refuses to build a package whose control file it cannot parse ("control file contains an
+# unclosed parentheses" is a real CI failure), and there is no dpkg on the development host, so the
+# parsing rules that bite are checked here instead.
+_ctrl_lines = read_text("control").split("\n")
+_ctrl_desc = []
+_in_desc = False
+for _l in _ctrl_lines:
+    if _l.startswith("Description:"):
+        _in_desc = True
+        _ctrl_desc.append(_l)
+        continue
+    if _in_desc:
+        if _l.startswith(" ") or _l.startswith("\t"):
+            _ctrl_desc.append(_l)
+        else:
+            break
+check("control file: the description has balanced parentheses",
+      _ctrl_desc and _ctrl_desc[0].count("(") == _ctrl_desc[0].count(")") and
+      all(l.count("(") == l.count(")") for l in _ctrl_desc),
+      " ".join(_ctrl_desc)[:120])
+check("control file: continuation lines are indented and required fields are present",
+      all(l.startswith(" ") for l in _ctrl_desc[1:]) and
+      all(k + ":" in read_text("control") for k in
+          ("Package", "Name", "Version", "Architecture", "Description", "Maintainer", "Author", "Section", "Depends")))
+
 # --- 6. packaging ---
 check("postinst is packaged (after-install hook or layout/DEBIAN/postinst)",
       "after-install" in UP or os.path.exists(os.path.join(ROOT, "layout", "DEBIAN", "postinst")))
