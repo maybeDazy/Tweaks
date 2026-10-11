@@ -543,10 +543,6 @@ static NSString *VCRTimestampFilenameWithExt(NSString *ext) {
     return [NSString stringWithFormat:@"VCR_%@.%@", [fmt stringFromDate:[NSDate date]], ext];
 }
 
-static NSString *VCRTimestampFilename(void) {
-    return VCRTimestampFilenameWithExt(@"m4a");
-}
-
 // Newest media file in the recordings folder - used by the Settings "Send Latest Recording" button.
 static NSURL *VCRNewestRecordingURL(void) {
     NSURL *dir = [NSURL fileURLWithPath:VCRRecordingDirectory() isDirectory:YES];

@@ -490,6 +490,13 @@ check("the audio quality group explains the lossless trade-off",
 check("the recording log records the format actually used",
       has("%@ %ld Hz %ld ch%@"))
 
+# --- 5l. dead statics: the toolchain runs -Werror, so an uncalled static function fails the build ---
+defs = set(re.findall(r"^\s*(?:__attribute__\(\(unused\)\)\s*)?static\s+[\w\s\*<>\[\]]+?\b(\w+)\s*\(", T, re.M))
+marked = set(re.findall(r"__attribute__\(\(unused\)\)\s*\nstatic\s+[\w\s\*<>\[\]]+?\b(\w+)\s*\(", T))
+uncalled = [n for n in sorted(defs)
+            if n not in marked and len(re.findall(r"\b%s\b" % re.escape(n), T)) < 2]
+check("no uncalled static function is left behind (the build errors on that)", not uncalled, repr(uncalled))
+
 # --- 6. packaging ---
 check("postinst is packaged (after-install hook or layout/DEBIAN/postinst)",
       "after-install" in UP or os.path.exists(os.path.join(ROOT, "layout", "DEBIAN", "postinst")))
