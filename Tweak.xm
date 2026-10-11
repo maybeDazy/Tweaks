@@ -1439,15 +1439,11 @@ static void VCRProcessCameraGestureEvent(UIEvent *event) {
     if (vcrCameraTouchPoints.count == 0) VCRResetCameraGesture();
 }
 
-// This hook used to swallow the original call (`return;` with no %orig). It was the only hook in
-// this file that blocked a system path it does not own, and a caller that waits on that method's
-// side effects would hang the host process - the exact shape of a version-dependent failure that
-// works on one iOS build and not another. The original now runs unconditionally.
-%hook SBSensorActivityDataProvider
-- (void)_handleNewDomainData:(id)arg1 {
-    %orig;
-}
-%end
+// SBSensorActivityDataProvider used to be hooked here as a probe, and its body only forwarded to
+// %orig. It is gone: that is a private class with a private selector, and nothing guarantees 15, 16
+// and 17 agree on either. This project's rule is that a class may only be hooked once it has been
+// observed on the running OS (scripts/hook_allowlist.txt), and the hook did nothing that its own
+// absence would not do - so the version risk was all cost and no benefit.
 
 %hook SpringBoard
 
@@ -1745,9 +1741,10 @@ static void VCRSchedulePrefsReload(void) {
                 VCRDebugEvent([NSString stringWithFormat:@"PREFS CHANGED CRASH %@: %@", exception.name, exception.reason]);
             }
         });
-// Ungrouped hooks (SpringBoard volume/sendEvent, SBSensorActivityDataProvider) live in
-// Logos' implicit _ungrouped group. Because this file uses %group elsewhere, Logos requires
-// _ungrouped to be initialized explicitly or the whole file fails to build.
+// Ungrouped hooks (SpringBoard volume/sendEvent) live in Logos' implicit _ungrouped group. SpringBoard
+// is the one class every supported iOS build is guaranteed to have, so it needs no feature check;
+// because this file uses %group elsewhere, Logos requires _ungrouped to be initialised explicitly or
+// the whole file fails to build.
 %init(_ungrouped);
 
 if (objc_getClass("SBVolumeHardwareButtonActions")) %init(VCRVolumeButtonHooks);

@@ -301,8 +301,11 @@ for _n, _ln in enumerate(T.split("\n"), 1):
         _hook_blocks.append((_cur, _start, _n, "\n".join(T.split("\n")[_start - 1:_n])))
         _cur = None
 _swallow = [(c, s) for c, s, e, body in _hook_blocks if "%orig" not in body]
+# Three blocks is the intended surface: SpringBoard (ungrouped) plus one group per guarded class
+# (SBVolumeHardwareButtonActions, SBVolumeControl). The count guards against a hook block being lost
+# to a bad edit as well as against one being added without a decision.
 check("every %hook passes the original call through",
-      len(_hook_blocks) >= 4 and not _swallow,
+      len(_hook_blocks) >= 3 and not _swallow,
       "hook blocks=%d, without %%orig: %s" % (len(_hook_blocks), _swallow))
 
 # --- 5e. the device helper must not carry credentials ---
@@ -360,6 +363,24 @@ _allow.discard("")
 _hooked = set(c for c, s, e, b in _hook_blocks)
 check("every hooked class is listed in scripts/hook_allowlist.txt",
       _hooked <= _allow and _hooked, "missing: %s" % sorted(_hooked - _allow))
+# Hooking a class the running OS does not have is a load-time failure. SpringBoard is the only class
+# every supported build is guaranteed to have, so every other hooked class must be feature-checked
+# with objc_getClass before its hooks are installed.
+check("every non-SpringBoard hooked class is feature-checked with objc_getClass before install",
+      all(('objc_getClass("%s")' % c) in T for c in (_hooked - {"SpringBoard"})),
+      "no objc_getClass guard for: %s"
+      % sorted(c for c in (_hooked - {"SpringBoard"}) if ('objc_getClass("%s")' % c) not in T))
+# iOS 15-17 covers arm64 parts (A10/A11: iPhone 7/8/X) as well as arm64e ones, and a thin arm64e
+# build cannot load on those at all. Measured: a thin arm64e build (0.0.14) did not help the iOS 16.1
+# loader either, so the second slice is pure downside to drop.
+_archs = ""
+for _line in UP.split("\n"):
+    if _line.startswith("ARCHS"):
+        _archs = _line
+        break
+check("the tweak still builds both the arm64 and arm64e slices",
+      "arm64" in _archs and "arm64e" in _archs,
+      "ARCHS must be 'arm64 arm64e'; arm64e-only drops every A10/A11 device this tweak targets")
 check("an OS version helper exists because the tweak supports 15 through 17",
       has("static BOOL VCROSAtLeast") and has("NSProcessInfo.processInfo.operatingSystemVersion"))
 

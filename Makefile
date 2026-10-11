@@ -1,4 +1,6 @@
-ARCHS = arm64e
+# arm64 is required: iOS 15-17 runs on arm64-only parts (A10/A11: iPhone 7/8/X) as well as arm64e ones,
+# and a thin arm64e build cannot load on those at all. Verified: thin arm64e (0.0.14) gave no benefit.
+ARCHS = arm64 arm64e
 TARGET = iphone:clang:16.5:15.0   # pinned: CI used iPhoneOS16.5.sdk; matches the documented 15.0 floor
 
 # Build with:
