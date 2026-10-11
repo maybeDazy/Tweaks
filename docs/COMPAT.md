@@ -30,7 +30,18 @@ a real device build.
 | `SpringBoard` | `sendEvent:`, `pressesBegan:withEvent:`, `pressesEnded:withEvent:` (ungrouped) | never absent |
 | `SBVolumeHardwareButtonActions` | `volumeIncreasePressDownWithModifiers:`, `volumeIncreasePressUp`, `volumeDecreasePressDownWithModifiers:`, `volumeDecreasePressUp` | press path falls back to the UIPress hooks |
 | `SBVolumeControl` | `increaseVolume`, `decreaseVolume` | press path is the only trigger |
-| `SBSensorActivityDataProvider` | `_handleNewDomainData:` (pass-through only, `%orig` runs) | nothing to do |
+| `_UIStatusBarIndicatorBlobView` | `setAlpha:`, `setHidden:`, `didMoveToWindow` | iOS 16+ uses the item view below instead |
+| `_UIStatusBarPrivacyIndicatorItemView` | `setAlpha:`, `setHidden:` | the blob view above covers 14/15 |
+| `_UIPrivacyIndicatorBlobView` | `setAlpha:`, `setHidden:` | nothing to do (name is 17+) |
+| `SBPrivacyBlobViewController` | `viewDidLoad`, `_updateBlobViews`, `_setVisible:animated:` | nothing to do |
+| `MTMicrophoneUsageView` | `setAlpha:`, `setHidden:` | nothing to do |
+| `MTPrivacyIndicatorViewController` | `viewDidLoad`, `_setIndicatorVisible:animated:` | nothing to do |
+
+The six privacy-indicator classes are the one row set that is not device-observed in the sense above:
+they come from the build the owner ran before 2026-05-20 and are restored on request. Safety comes from
+the structure instead of the name - each is hooked only behind its own `objc_getClass` guard, every hook
+still calls `%orig`, and the tweak records which of the six the running OS actually has in
+`debugPrivacyIndicatorClasses` on every load. A name that no longer exists is inert, not fatal.
 
 ## Path rules used by this tweak
 
@@ -61,5 +72,11 @@ a real device build.
 
 - The tweak is SpringBoard-only by design (`Filter = { Bundles = (com.apple.springboard); }`): it is not
   injected into apps or daemons, so it cannot affect the boot chain and it cannot hang a third-party app.
-- The microphone/camera privacy indicator is an iOS feature and is not hidden.
+- The microphone/camera privacy indicator is hidden only while **Hide Privacy Dot** is on; with it off
+  (the default) every indicator hook passes the real value through. The hooks force the indicator
+  *views* to zero alpha - they do not block the sensor-activity data path - so nothing else that reads
+  that data is affected.
+- The chord's press-down selectors are not reported for every press on iOS 16.4.1 (device tally: 825
+  press-ups against 283 press-downs). Both buttons releasing inside 150 ms is therefore also treated as
+  the chord, which is what makes a quick press work when the press-down never arrives.
 - An iOS 15.x or 17.x device has not been tested yet; those rows stay `unverified` until one is.

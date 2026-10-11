@@ -381,6 +381,35 @@ for _line in UP.split("\n"):
 check("the tweak still builds both the arm64 and arm64e slices",
       "arm64" in _archs and "arm64e" in _archs,
       "ARCHS must be 'arm64 arm64e'; arm64e-only drops every A10/A11 device this tweak targets")
+
+# ── The privacy-indicator surface (restored 2026-10-11 on request) ──
+# It is a feature the owner wants back, so the checks that make it inert by default and harmless on a
+# version whose classes differ are pinned here rather than left to the code comments.
+_PRIVACY_CLASSES = ["_UIStatusBarIndicatorBlobView", "_UIStatusBarPrivacyIndicatorItemView",
+                    "_UIPrivacyIndicatorBlobView", "SBPrivacyBlobViewController",
+                    "MTMicrophoneUsageView", "MTPrivacyIndicatorViewController"]
+check("every privacy-indicator class is hooked behind its own objc_getClass guard",
+      all(("%hook " + c) in T and ('objc_getClass("%s")' % c) in T for c in _PRIVACY_CLASSES),
+      "guard or hook missing for: %s"
+      % [c for c in _PRIVACY_CLASSES if ("%hook " + c) not in T or ('objc_getClass("%s")' % c) not in T])
+check("the privacy indicator is off until the preference turns it on",
+      'VCRBoolPref(@"hidePrivacyDot", NO)' in T and "hidePrivacyDot" in PLIST_TEXT,
+      "hidePrivacyDot must default to NO and have a Settings cell")
+check("the privacy-indicator hooks substitute the value instead of swallowing the call",
+      T.count("%orig(vcrHidePrivacyDot") >= 6,
+      "each indicator hook must call %orig with the substituted alpha/hidden value")
+
+# ── The chord resolves in exactly one place, and STOP does not depend on the hold length ──
+_resolve_chord = (T.split("static void VCRResolveChord")[1].split("\n}\n")[0]
+                  if "static void VCRResolveChord" in T else "")
+check("the chord release is resolved in one shared place, with STOP ahead of the toggles",
+      bool(_resolve_chord) and "VCRStopAnyRecording" in _resolve_chord
+      and _resolve_chord.find("VCRStopAnyRecording") < _resolve_chord.find("VCRToggleVideoRecording"),
+      "VCRResolveChord must hold the release logic with the STOP branch before the video/audio toggles")
+check("the chord also arms from a paired release, because press-down is not always reported",
+      "VCRChordReleasePairWindow" in T and "release-pair" in T
+      and "(now - vcrLastChordResolveAt) > VCRChordReleasePairWindow" in T,
+      "the release-side pairing path or its double-fire guard is missing")
 check("an OS version helper exists because the tweak supports 15 through 17",
       has("static BOOL VCROSAtLeast") and has("NSProcessInfo.processInfo.operatingSystemVersion"))
 
@@ -523,7 +552,13 @@ check("no uncalled static function is left behind (the build errors on that)", n
 check("a single button press can never toggle a recording (only a pressed chord may)",
       has("if (!chordWasPressed) return;") and
       has("chordWasPressed && (vcrCameraRecording || isRecording)") is False and
-      T.index("if (!chordWasPressed) return;") < T.index("BOOL heldToTheThreshold"))
+      # The release is resolved in one shared helper, so the invariant moved with it: every call to it
+      # must sit behind a "a chord was actually pressed" guard - either the chordWasPressed check in
+      # VCRCheckChord (armed path) or the !vcrChordPressed gate in the release-pairing path. The count
+      # is pinned so a new call site cannot be added without deciding which guard it gets.
+      T.count("VCRResolveChord(") == 3 and
+      T.index("if (!chordWasPressed) return;") < T.index("VCRResolveChord(stage)") and
+      "!vcrChordPressed &&" in T)
 check("the camera hold is its own preference with its own fallback",
       has('VCRDoublePref(@"cameraHoldSeconds"') and has("static NSTimeInterval vcrCameraHoldSeconds = 3.0") and
       has("holdNeeded = MAX(0.2, vcrCameraHoldSeconds)") and "holdNeeded = MAX(0.2, vcrHoldSeconds)" not in T)

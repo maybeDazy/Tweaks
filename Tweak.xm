@@ -36,6 +36,17 @@ static BOOL vcrChordPressed = NO;   // both buttons went down, even for a tap sh
 static const NSTimeInterval VCRChordPairWindow = 0.45;
 static NSTimeInterval vcrVolumeUpPressedAt = 0.0;
 static NSTimeInterval vcrVolumeDownPressedAt = 0.0;
+static NSTimeInterval vcrVolumeUpReleasedAt = 0.0;
+static NSTimeInterval vcrVolumeDownReleasedAt = 0.0;
+static NSTimeInterval vcrLastChordResolveAt = 0.0;
+// The press-down selectors are NOT reported for every press on iOS 16.4.1 (device tally: 825 press-ups
+// against 283 press-downs), and a chord that can only arm from a press-down silently does nothing when
+// that down never arrives - measured on 2026-10-11: three chord attempts in a row produced no
+// recording at all while release events for both buttons arrived 6 ms apart. Both buttons coming up
+// inside this window is therefore treated as the same gesture. Deliberately tighter than the
+// press-side window: tapping volume up and then volume down quickly also produces a release pair, and
+// a false chord starts a recording.
+static const NSTimeInterval VCRChordReleasePairWindow = 0.15;
 static NSTimer *holdTimer = nil;
 static NSTimer *maxRecordTimer = nil;
 static AVAudioRecorder *recorder = nil;
@@ -55,6 +66,9 @@ static BOOL vcrCameraEnabled = NO;
 static BOOL vcrCameraChordTrigger = YES;
 static BOOL vcrCameraSwipeTrigger = NO;
 static BOOL vcrCameraRecordAudio = YES;   // microphone channel for video
+// The iOS privacy indicator (orange microphone dot / green camera dot). Off by default, and with it
+// off every indicator hook passes the real value straight through, so an install behaves like stock.
+static BOOL vcrHidePrivacyDot = NO;
 static CGFloat vcrCameraSwipeDistance = 140.0;
 static NSInteger vcrCameraFingerCount = 4;
 // Device/quality selection. String-valued prefs so the Settings lists round-trip cleanly
@@ -363,6 +377,7 @@ vcrVolumeChordTrigger = VCRBoolPref(@"volumeChordTrigger", YES);
     vcrCameraSwipeTrigger = VCRBoolPref(@"cameraSwipeTrigger", NO);
     vcrCameraSwipeDistance = (CGFloat)VCRDoublePref(@"cameraSwipeDistance", 140.0, 60.0, 500.0);
     vcrCameraRecordAudio = VCRBoolPref(@"cameraRecordAudio", YES);
+    vcrHidePrivacyDot = VCRBoolPref(@"hidePrivacyDot", NO);
     vcrCameraPosition = VCRStringPref(@"cameraPosition", @"back");
     vcrCameraLens = VCRStringPref(@"cameraLens", @"wide");
     vcrCameraVideoQuality = VCRStringPref(@"cameraVideoQuality", @"1080p30");
@@ -1153,6 +1168,46 @@ static void VCRStopAnyRecording(void) {
     if (isRecording) VCRStopRecording();
 }
 
+static BOOL VCRCameraChordEnabled(void) {
+    return vcrEnabled && vcrCameraEnabled && vcrCameraChordTrigger;
+}
+
+static BOOL VCRAudioChordEnabled(void) {
+    return vcrEnabled && vcrVolumeChordTrigger;
+}
+
+// The release half of the chord, in ONE place: the armed path (VCRCheckChord) and the release-pairing
+// path (VCRVolumeButtonEvent, for presses whose press-down was never reported) must resolve the same
+// way, or "press both to stop" would behave differently depending on which event arrived.
+// Order is deliberate: stopping wins over everything, then the long hold, then the audio toggle.
+static void VCRResolveChord(NSInteger stage) {
+    vcrLastChordResolveAt = CFAbsoluteTimeGetCurrent();
+    // Stopping must never depend on how long the buttons were held. A quick tap used to do nothing at
+    // all (stage stayed 0), which is exactly the "REC will not turn off" report.
+    if (vcrCameraRecording || isRecording) {
+        VCRLog(@"Chord release (stage %ld) -> STOP active recording", (long)stage);
+        VCRDebugEvent(@"chord -> STOP");
+        VCRStickyNote(@"debugLastAction", @"stop (released while recording)");
+        VCRStopAnyRecording();
+        return;
+    }
+    // The long hold is the video gesture. With the audio chord switched off there is nothing the short
+    // one could mean, so it starts video as well rather than doing nothing.
+    BOOL heldToTheThreshold = (stage >= 1);
+    if (VCRCameraChordEnabled() && (heldToTheThreshold || !VCRAudioChordEnabled())) {
+        VCRLog(@"Chord %@ -> video toggle", heldToTheThreshold ? @"held past Hold Seconds" : @"(audio chord off)");
+        VCRStickyNote(@"debugLastAction", @"video toggle");
+        VCRToggleVideoRecording();
+        return;
+    }
+    if (VCRAudioChordEnabled()) {
+        VCRLog(@"Chord released before Hold Seconds -> audio toggle");
+        VCRStickyNote(@"debugLastAction", @"audio toggle (quick press)");
+        VCRToggleRecording();
+        return;
+    }
+}
+
 // Volume Up + Volume Down chord, resolved on RELEASE by how long it was held:
 //   released before Hold Seconds : audio recording start/stop
 //   held for Hold Seconds        : video recording start/stop (one tick marks the threshold)
@@ -1161,8 +1216,6 @@ static void VCRStopAnyRecording(void) {
 // actually wanted, and a three-way mapping made a plain "press both" ambiguous.
 static void VCRCheckChord(void) {
     BOOL bothPressed = volumeUpPressed && volumeDownPressed;
-    BOOL cameraChord = vcrEnabled && vcrCameraEnabled && vcrCameraChordTrigger;
-    BOOL audioChord = vcrEnabled && vcrVolumeChordTrigger;
 
     if (!bothPressed) {
         NSInteger stage = vcrChordStage;
@@ -1184,46 +1237,21 @@ static void VCRCheckChord(void) {
         // guard the toggle mapping at the bottom ran for all of them: the reported "any button starts
         // a recording" regression (introduced when the tier table was recut in ddb7235).
         if (!chordWasPressed) return;
-
-        // Stopping must never depend on how long the buttons were held. A quick tap used to do
-        // nothing at all (stage stayed 0), which is exactly the "REC will not turn off" report.
-        if (vcrCameraRecording || isRecording) {
-            VCRLog(@"Chord release (stage %ld) -> STOP active recording", (long)stage);
-            VCRDebugEvent(@"chord -> STOP");
-            VCRStickyNote(@"debugLastAction", @"stop (released while recording)");
-            VCRStopAnyRecording();
-            return;
-        }
-        // Stopping never depends on how long the buttons were held (handled above).
-        BOOL heldToTheThreshold = (stage >= 1);
-        // The long hold is the video gesture. With the audio chord switched off there is nothing the
-        // short one could mean, so it starts video as well rather than doing nothing.
-        BOOL toVideo = cameraChord && (heldToTheThreshold || !audioChord);
-        if (toVideo) {
-            VCRLog(@"Chord %@ -> video toggle", heldToTheThreshold ? @"held past Hold Seconds" : @"(audio chord off)");
-            VCRStickyNote(@"debugLastAction", @"video toggle");
-            VCRToggleVideoRecording();
-            return;
-        }
-        if (audioChord) {
-            VCRLog(@"Chord released before Hold Seconds -> audio toggle");
-            VCRStickyNote(@"debugLastAction", @"audio toggle (quick press)");
-            VCRToggleRecording();
-            return;
-        }
+        VCRResolveChord(stage);
         return;
     }
 
-    if (!cameraChord && !audioChord) { VCRResetChordState(); return; }
+    if (!VCRCameraChordEnabled() && !VCRAudioChordEnabled()) { VCRResetChordState(); return; }
     vcrChordPressed = YES;
     if (holdTimer) return; // already counting
 
     NSTimeInterval holdNeeded = MAX(0.2, vcrCameraHoldSeconds);
     VCRStickyNote(@"debugLastChordArmed", [NSString stringWithFormat:@"armed hold=%.1fs cam=%d aud=%d up=%d down=%d",
-                                           holdNeeded, cameraChord, audioChord, volumeUpPressed, volumeDownPressed]);
+                                           holdNeeded, VCRCameraChordEnabled(), VCRAudioChordEnabled(),
+                                           volumeUpPressed, volumeDownPressed]);
     VCRDebugBump(@"debugChordCounts", @"armed");
     VCRLog(@"Volume chord down; release before %.1fs = audio, hold past it = video (cam=%d aud=%d)",
-           holdNeeded, cameraChord, audioChord);
+           holdNeeded, VCRCameraChordEnabled(), VCRAudioChordEnabled());
 
     // Exactly one threshold now. The tick tells you the chord has become the video gesture, so the
     // hold never has to be guessed.
@@ -1570,6 +1598,24 @@ static void VCRVolumeButtonEvent(BOOL isIncrease, BOOL isDown) {
                                    (now - other) * 1000.0]);
                     VCRDebugBump(@"debugChordCounts", @"paired-press");
                 }
+            } else {
+                // Release-side chord. Press-down is not reported for every press on this build, and a
+                // chord that can only arm from a press-down does nothing at all when the down never
+                // arrives. Two guards keep this from double-firing: the chord must not already be in
+                // flight, and nothing may have been resolved a moment ago (when the down WAS reported,
+                // the first release resolves the chord and the second release arrives ~6 ms later).
+                NSTimeInterval now = CFAbsoluteTimeGetCurrent();
+                if (isIncrease) vcrVolumeUpReleasedAt = now; else vcrVolumeDownReleasedAt = now;
+                NSTimeInterval otherRelease = isIncrease ? vcrVolumeDownReleasedAt : vcrVolumeUpReleasedAt;
+                if (!vcrChordPressed &&
+                    (now - vcrLastChordResolveAt) > VCRChordReleasePairWindow &&
+                    otherRelease > 0.0 && (now - otherRelease) <= VCRChordReleasePairWindow) {
+                    VCRDebugBump(@"debugChordCounts", @"release-pair");
+                    VCRDebugEvent([NSString stringWithFormat:@"volbtn chord from paired releases (%.0f ms apart, no down reported)",
+                                   (now - otherRelease) * 1000.0]);
+                    VCRResolveChord(0);   // a release carries no hold length, so: the quick-press gesture
+                    return;               // VCRResolveChord just did everything this event would do
+                }
             }
             VCRCheckChord();
         } @catch (NSException *exception) {
@@ -1664,6 +1710,129 @@ static void VCRSchedulePrefsReload(void) {
     });
 }
 
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// MARK: - Privacy indicator (the orange microphone dot / green camera dot)
+//
+// Restored from the build the device owner ran before 2026-05-20, with one change: every class is
+// hooked inside its own group that is only initialised when the running OS actually has that class.
+// The original hooked all six unconditionally, and these are private, version-dependent UIKit,
+// MediaToolbox and SpringBoard classes - a name that a given iOS build does not have is a load-time
+// failure, not a harmless no-op.
+//
+// What each hook does is force the indicator view's alpha/hidden value, NOT block the sensor-activity
+// data path. That is why every hook here still calls %orig (with a substituted value where the API
+// takes one): suppressing the data path would also hide the indicator from anything else that reads
+// it, and the earlier attempt at that (`SBSensorActivityDataProvider -_handleNewDomainData:` with a
+// bare `return;`) is not what this restore brings back.
+//
+// hidePrivacyDot = NO (default) -> every hook passes the real value through, i.e. stock behaviour.
+// hidePrivacyDot = YES          -> the indicator is hidden; takes effect on the next indicator update,
+//                                 and a respring clears one that is already on screen.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+
+// ── Status bar blob view (iOS 14/15) ──
+%group VCRPrivacyBlobHooks
+%hook _UIStatusBarIndicatorBlobView
+
+- (void)setAlpha:(CGFloat)alpha {
+    %orig(vcrHidePrivacyDot ? 0.0 : alpha);
+}
+
+- (void)setHidden:(BOOL)hidden {
+    %orig(vcrHidePrivacyDot ? YES : hidden);
+}
+
+- (void)didMoveToWindow {
+    %orig;
+    if (vcrHidePrivacyDot) { self.hidden = YES; self.alpha = 0.0; }
+}
+
+%end
+%end
+
+// ── Privacy indicator item view (iOS 16+) ──
+%group VCRPrivacyIndicatorItemHooks
+%hook _UIStatusBarPrivacyIndicatorItemView
+
+- (void)setAlpha:(CGFloat)alpha {
+    %orig(vcrHidePrivacyDot ? 0.0 : alpha);
+}
+
+- (void)setHidden:(BOOL)hidden {
+    %orig(vcrHidePrivacyDot ? YES : hidden);
+}
+
+%end
+%end
+
+// ── iOS 17+ renamed blob view ──
+%group VCRPrivacyIndicatorBlobHooks
+%hook _UIPrivacyIndicatorBlobView
+
+- (void)setAlpha:(CGFloat)alpha {
+    %orig(vcrHidePrivacyDot ? 0.0 : alpha);
+}
+
+- (void)setHidden:(BOOL)hidden {
+    %orig(vcrHidePrivacyDot ? YES : hidden);
+}
+
+%end
+%end
+
+// ── SpringBoard's own blob controller (the Control Center "in use" banner) ──
+%group VCRPrivacyBlobControllerHooks
+%hook SBPrivacyBlobViewController
+
+- (void)viewDidLoad {
+    %orig;
+    if (!vcrHidePrivacyDot) return;
+    self.view.hidden = YES;
+    self.view.alpha = 0.0;
+}
+
+- (void)_updateBlobViews {
+    if (vcrHidePrivacyDot) return;
+    %orig;
+}
+
+- (void)_setVisible:(BOOL)visible animated:(BOOL)animated {
+    %orig(vcrHidePrivacyDot ? NO : visible, animated);
+}
+
+%end
+%end
+
+// ── MediaToolbox microphone indicator (iOS 15+) ──
+%group VCRMicUsageViewHooks
+%hook MTMicrophoneUsageView
+
+- (void)setAlpha:(CGFloat)alpha {
+    %orig(vcrHidePrivacyDot ? 0.0 : alpha);
+}
+
+- (void)setHidden:(BOOL)hidden {
+    %orig(vcrHidePrivacyDot ? YES : hidden);
+}
+
+%end
+%end
+
+%group VCRPrivacyIndicatorControllerHooks
+%hook MTPrivacyIndicatorViewController
+
+- (void)viewDidLoad {
+    %orig;
+    if (vcrHidePrivacyDot) self.view.hidden = YES;
+}
+
+- (void)_setIndicatorVisible:(BOOL)visible animated:(BOOL)animated {
+    %orig(vcrHidePrivacyDot ? NO : visible, animated);
+}
+
+%end
+%end
+
 %ctor {
     @autoreleasepool {
         NSString *bundleID = [[NSBundle mainBundle] bundleIdentifier] ?: @"unknown";
@@ -1715,6 +1884,25 @@ static void VCRSchedulePrefsReload(void) {
 
         VCRLoadPrefs();
 
+        // Which of the six privacy-indicator classes this iOS build actually has. Written every load,
+        // so the Settings debug log answers "did the hook I need even install" from the device instead
+        // of from a version number. It also makes a name that no longer exists visible immediately
+        // rather than as a silently missing dot.
+        {
+            NSMutableArray<NSString *> *privacyClasses = [NSMutableArray array];
+            NSArray<NSString *> *candidates = @[
+                @"_UIStatusBarIndicatorBlobView", @"_UIStatusBarPrivacyIndicatorItemView",
+                @"_UIPrivacyIndicatorBlobView", @"SBPrivacyBlobViewController",
+                @"MTMicrophoneUsageView", @"MTPrivacyIndicatorViewController",
+            ];
+            for (NSString *name in candidates) {
+                if (objc_getClass(name.UTF8String) != Nil) [privacyClasses addObject:name];
+            }
+            VCRStickyNote(@"debugPrivacyIndicatorClasses",
+                          [NSString stringWithFormat:@"hidePrivacyDot=%d %@", vcrHidePrivacyDot,
+                           privacyClasses.count ? [privacyClasses componentsJoinedByString:@", "] : @"(none present)"]);
+        }
+
         dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_BACKGROUND, 0), ^{ VCRDumpVolumeAPI(); });
 
         // Telegram uploads report into the same CFPreferences debug log the Settings pane shows.
@@ -1749,6 +1937,15 @@ static void VCRSchedulePrefsReload(void) {
 
 if (objc_getClass("SBVolumeHardwareButtonActions")) %init(VCRVolumeButtonHooks);
 if (objc_getClass("SBVolumeControl")) %init(VCRVolumeControlHooks);
+
+// Privacy indicator. One guard per class: the six names do not all exist on every supported iOS
+// version, and %hook on a class the OS does not have is a load-time failure.
+if (objc_getClass("_UIStatusBarIndicatorBlobView")) %init(VCRPrivacyBlobHooks);
+if (objc_getClass("_UIStatusBarPrivacyIndicatorItemView")) %init(VCRPrivacyIndicatorItemHooks);
+if (objc_getClass("_UIPrivacyIndicatorBlobView")) %init(VCRPrivacyIndicatorBlobHooks);
+if (objc_getClass("SBPrivacyBlobViewController")) %init(VCRPrivacyBlobControllerHooks);
+if (objc_getClass("MTMicrophoneUsageView")) %init(VCRMicUsageViewHooks);
+if (objc_getClass("MTPrivacyIndicatorViewController")) %init(VCRPrivacyIndicatorControllerHooks);
 
         VCRLog(@"Loaded SAFE SpringBoard-only build, volumeUpType=%d volumeDownType=%d volumeChord=%d threeSwipe=%d", VCR_PRESS_TYPE_VOLUME_UP, VCR_PRESS_TYPE_VOLUME_DOWN, vcrVolumeChordTrigger, vcrThreeFingerSwipeDownTrigger);
     }

@@ -32,6 +32,28 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>label</key>
+			<string>Privacy Indicator</string>
+			<key>footerText</key>
+			<string>Hides the iOS privacy indicator (the orange microphone dot and the green camera dot) by forcing every status-bar, MediaToolbox and SpringBoard indicator view to zero alpha. The classes differ per iOS version, so each one is hooked only if the running OS actually has it. Off by default: with the switch off every hook passes the real value straight through and the tweak changes nothing. Takes effect on the next indicator update; respring to clear a dot that is already on screen.</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>label</key>
+			<string>Hide Privacy Dot</string>
+			<key>key</key>
+			<string>hidePrivacyDot</string>
+			<key>default</key>
+			<false/>
+			<key>defaults</key>
+			<string>com.yourname.volumechordrecorder</string>
+			<key>PostNotification</key>
+			<string>com.yourname.volumechordrecorder.prefschanged</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
 			<string>Recording Trigger</string>
 			<key>footerText</key>
 		<string>Swipe down with three fingers on the Home Screen and in SpringBoard UI. This tweak is injected into SpringBoard only, so the gesture does not exist inside third-party apps.</string>
@@ -352,7 +374,7 @@
 			<key>label</key>
 			<string>Camera Capture</string>
 			<key>footerText</key>
-		<string>Volume Up + Volume Down chord, two ways: press both together and let go quickly to start or stop an audio recording; keep holding for Hold Seconds (a haptic tick marks the moment) to start or stop video. While anything is recording the chord always means STOP, at any length. Photo capture is no longer triggered by any gesture in this build. Capture is silent and files save next to the audio recordings. Use Microphone Channel decides whether video carries an audio track (off = silent footage). The iOS privacy dot still appears while the camera is in use. Video formats mirror the Camera app and unsupported combinations fall back automatically.</string>
+		<string>Volume Up + Volume Down chord, two ways: press both together and let go quickly to start or stop an audio recording; keep holding for Hold Seconds (a haptic tick marks the moment) to start or stop video. While anything is recording the chord always means STOP, at any length. Photo capture is no longer triggered by any gesture in this build. Capture is silent and files save next to the audio recordings. Use Microphone Channel decides whether video carries an audio track (off = silent footage). The iOS privacy dot is controlled by Hide Privacy Dot under Privacy Indicator. Video formats mirror the Camera app and unsupported combinations fall back automatically.</string>
 		</dict>
 		<dict>
 			<key>cell</key>
