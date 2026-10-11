@@ -1728,6 +1728,10 @@ static void VCRSchedulePrefsReload(void) {
 // hidePrivacyDot = NO (default) -> every hook passes the real value through, i.e. stock behaviour.
 // hidePrivacyDot = YES          -> the indicator is hidden; takes effect on the next indicator update,
 //                                 and a respring clears one that is already on screen.
+//
+// Build constraint (cost one CI run): a %hook body only sees the methods that group declares, and the
+// class itself is forward-declared, so `self.hidden` / `self.view` do not compile. Everything here goes
+// through the hooked methods instead - the two setters, or the controller's own visibility method.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
 // ── Status bar blob view (iOS 14/15) ──
@@ -1744,7 +1748,9 @@ static void VCRSchedulePrefsReload(void) {
 
 - (void)didMoveToWindow {
     %orig;
-    if (vcrHidePrivacyDot) { self.hidden = YES; self.alpha = 0.0; }
+    // The class is only forward-declared inside a %hook, so properties of it cannot be touched
+    // directly here; the two setters this group already hooks are the way in.
+    if (vcrHidePrivacyDot) { [self setHidden:YES]; [self setAlpha:0.0]; }
 }
 
 %end
@@ -1781,15 +1787,10 @@ static void VCRSchedulePrefsReload(void) {
 %end
 
 // ── SpringBoard's own blob controller (the Control Center "in use" banner) ──
+// No viewDidLoad hook: a %hook body may only use methods this group declares, and `self.view` is not
+// one of them. The controller's own visibility methods are the real path anyway.
 %group VCRPrivacyBlobControllerHooks
 %hook SBPrivacyBlobViewController
-
-- (void)viewDidLoad {
-    %orig;
-    if (!vcrHidePrivacyDot) return;
-    self.view.hidden = YES;
-    self.view.alpha = 0.0;
-}
 
 - (void)_updateBlobViews {
     if (vcrHidePrivacyDot) return;
@@ -1820,11 +1821,6 @@ static void VCRSchedulePrefsReload(void) {
 
 %group VCRPrivacyIndicatorControllerHooks
 %hook MTPrivacyIndicatorViewController
-
-- (void)viewDidLoad {
-    %orig;
-    if (vcrHidePrivacyDot) self.view.hidden = YES;
-}
 
 - (void)_setIndicatorVisible:(BOOL)visible animated:(BOOL)animated {
     %orig(vcrHidePrivacyDot ? NO : visible, animated);

@@ -33,9 +33,9 @@ a real device build.
 | `_UIStatusBarIndicatorBlobView` | `setAlpha:`, `setHidden:`, `didMoveToWindow` | iOS 16+ uses the item view below instead |
 | `_UIStatusBarPrivacyIndicatorItemView` | `setAlpha:`, `setHidden:` | the blob view above covers 14/15 |
 | `_UIPrivacyIndicatorBlobView` | `setAlpha:`, `setHidden:` | nothing to do (name is 17+) |
-| `SBPrivacyBlobViewController` | `viewDidLoad`, `_updateBlobViews`, `_setVisible:animated:` | nothing to do |
+| `SBPrivacyBlobViewController` | `_updateBlobViews`, `_setVisible:animated:` | nothing to do |
 | `MTMicrophoneUsageView` | `setAlpha:`, `setHidden:` | nothing to do |
-| `MTPrivacyIndicatorViewController` | `viewDidLoad`, `_setIndicatorVisible:animated:` | nothing to do |
+| `MTPrivacyIndicatorViewController` | `_setIndicatorVisible:animated:` | nothing to do |
 
 The six privacy-indicator classes are the one row set that is not device-observed in the sense above:
 they come from the build the owner ran before 2026-05-20 and are restored on request. Safety comes from
