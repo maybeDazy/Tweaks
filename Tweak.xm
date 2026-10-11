@@ -2005,13 +2005,22 @@ static void VCRSchedulePrefsReload(void) {
         // where it can be read back - the log file this build would like to use is not writable from
         // SpringBoard, which is exactly why the earlier TCC line was never seen.
         {
-            long videoStatus = (long)[AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeVideo];
-            long audioStatus = (long)[AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio];
+            // AVCaptureDeviceDiscoverySession is what this file already uses elsewhere (see
+            // VCRCameraSelectDevice); +devicesWithMediaType: is deprecated and -Werror rejects it.
+            AVCaptureDeviceDiscoverySession *videoDiscovery =
+                [AVCaptureDeviceDiscoverySession discoverySessionWithDeviceTypes:@[AVCaptureDeviceTypeBuiltInWideAngleCamera]
+                                                                       mediaType:AVMediaTypeVideo
+                                                                        position:AVCaptureDevicePositionUnspecified];
+            AVCaptureDeviceDiscoverySession *audioDiscovery =
+                [AVCaptureDeviceDiscoverySession discoverySessionWithDeviceTypes:@[AVCaptureDeviceTypeBuiltInMicrophone]
+                                                                       mediaType:AVMediaTypeAudio
+                                                                        position:AVCaptureDevicePositionUnspecified];
             VCRStickyNote(@"debugCameraAuth",
                           [NSString stringWithFormat:@"video=%ld audio=%ld video_devices=%lu audio_devices=%lu authorized_flag=%d",
-                           videoStatus, audioStatus,
-                           (unsigned long)[AVCaptureDevice devicesWithMediaType:AVMediaTypeVideo].count,
-                           (unsigned long)[AVCaptureDevice devicesWithMediaType:AVMediaTypeAudio].count,
+                           (long)[AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeVideo],
+                           (long)[AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio],
+                           (unsigned long)videoDiscovery.devices.count,
+                           (unsigned long)audioDiscovery.devices.count,
                            vcrCameraAuthorized]);
         }
 
