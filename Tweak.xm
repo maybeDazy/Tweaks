@@ -13,6 +13,18 @@
 static NSString * const VCRPrefsID = @"com.yourname.volumechordrecorder";
 static NSString * const VCRPrefix = @"[VolumeChordRecorder]";
 
+// The privacy-indicator classes hooked further down are private, so no SDK header declares them, and
+// Logos only forward-declares a hooked class. A %hook body cannot message `self` through a forward
+// declaration (clang: "receiver type ... for instance message is a forward declaration"), so each one
+// is declared here against the superclass it actually has. Nothing in those hooks touches an ivar, so
+// the declaration only has to be close enough to resolve the selectors being called.
+@interface _UIStatusBarIndicatorBlobView : UIView @end
+@interface _UIStatusBarPrivacyIndicatorItemView : UIView @end
+@interface _UIPrivacyIndicatorBlobView : UIView @end
+@interface SBPrivacyBlobViewController : UIViewController @end
+@interface MTMicrophoneUsageView : UIView @end
+@interface MTPrivacyIndicatorViewController : UIViewController @end
+
 static BOOL vcrEnabled = YES;
 static BOOL vcrHaptics = YES;
 static BOOL vcrLogPresses = NO;
