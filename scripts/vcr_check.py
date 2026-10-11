@@ -427,10 +427,15 @@ check("the chord release is resolved in one shared place, with STOP ahead of the
       bool(_resolve_chord) and "VCRStopAnyRecording" in _resolve_chord
       and _resolve_chord.find("VCRStopAnyRecording") < _resolve_chord.find("VCRToggleVideoRecording"),
       "VCRResolveChord must hold the release logic with the STOP branch before the video/audio toggles")
-check("the chord also arms from a paired release, because press-down is not always reported",
-      "VCRChordReleasePairWindow" in T and "release-pair" in T
-      and "(now - vcrLastChordResolveAt) > VCRChordReleasePairWindow" in T,
-      "the release-side pairing path or its double-fire guard is missing")
+check("a lone release pair can never resolve a chord (the power button fires two ups, no downs)",
+      # The release-side call site is gone: the only way into VCRResolveChord is the armed path behind
+      # "a chord was actually pressed". Measured on the device - every power press produced
+      # "volbtn + up" / "volbtn - up" ~5 ms apart with no press-down and started a recording.
+      "VCRResolveChord(0)" not in T and
+      '"release-pair-ignored"' in T and '"up-without-press"' in T and
+      "(now - vcrVolumeUpPressedAt) > 1.0 && (now - vcrVolumeDownPressedAt) > 1.0" in T,
+      "the phantom-release detector must stay a counter, and no release-only call into "
+      "VCRResolveChord may exist")
 check("an OS version helper exists because the tweak supports 15 through 17",
       has("static BOOL VCROSAtLeast") and has("NSProcessInfo.processInfo.operatingSystemVersion"))
 
@@ -573,13 +578,12 @@ check("no uncalled static function is left behind (the build errors on that)", n
 check("a single button press can never toggle a recording (only a pressed chord may)",
       has("if (!chordWasPressed) return;") and
       has("chordWasPressed && (vcrCameraRecording || isRecording)") is False and
-      # The release is resolved in one shared helper, so the invariant moved with it: every call to it
-      # must sit behind a "a chord was actually pressed" guard - either the chordWasPressed check in
-      # VCRCheckChord (armed path) or the !vcrChordPressed gate in the release-pairing path. The count
-      # is pinned so a new call site cannot be added without deciding which guard it gets.
-      T.count("VCRResolveChord(") == 3 and
-      T.index("if (!chordWasPressed) return;") < T.index("VCRResolveChord(stage)") and
-      "!vcrChordPressed &&" in T)
+      # The release is resolved in one shared helper, so the invariant moved with it: the only call to
+      # it must sit behind the "a chord was actually pressed" guard in VCRCheckChord. The count is
+      # pinned so a new call site cannot be added without deciding which guard it gets - and the
+      # release-only call site that used to be the second one is gone for good (power button, 0.0.16).
+      T.count("VCRResolveChord(") == 2 and
+      T.index("if (!chordWasPressed) return;") < T.index("VCRResolveChord(stage)"))
 check("the camera hold is its own preference with its own fallback",
       has('VCRDoublePref(@"cameraHoldSeconds"') and has("static NSTimeInterval vcrCameraHoldSeconds = 3.0") and
       has("holdNeeded = MAX(0.2, vcrCameraHoldSeconds)") and "holdNeeded = MAX(0.2, vcrHoldSeconds)" not in T)

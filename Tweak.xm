@@ -50,14 +50,14 @@ static NSTimeInterval vcrVolumeUpPressedAt = 0.0;
 static NSTimeInterval vcrVolumeDownPressedAt = 0.0;
 static NSTimeInterval vcrVolumeUpReleasedAt = 0.0;
 static NSTimeInterval vcrVolumeDownReleasedAt = 0.0;
-static NSTimeInterval vcrLastChordResolveAt = 0.0;
-// The press-down selectors are NOT reported for every press on iOS 16.4.1 (device tally: 825 press-ups
-// against 283 press-downs), and a chord that can only arm from a press-down silently does nothing when
-// that down never arrives - measured on 2026-10-11: three chord attempts in a row produced no
-// recording at all while release events for both buttons arrived 6 ms apart. Both buttons coming up
-// inside this window is therefore treated as the same gesture. Deliberately tighter than the
-// press-side window: tapping volume up and then volume down quickly also produces a release pair, and
-// a false chord starts a recording.
+// The window for one release pair, and a DETECTOR, never a trigger. Two releases inside it with no
+// press-down behind either is the power button's phantom (VCRVolumeButtonEvent counts it as
+// release-pair-ignored). It used to trigger, on the reading that "825 press-ups against 283
+// press-downs" meant press-downs are not reported - that tally is contaminated, because the power
+// button fires both of these up selectors. Device log 2026-10-12 00:55:14: "volbtn + up", "volbtn -
+// up" 7 ms apart, no down, and a recording started. The UIPress path is exactly symmetric
+// (began102=241/ended102=241, began103=208/ended103=208), so press-downs ARE reported and a lone
+// release pair must never resolve a chord.
 static const NSTimeInterval VCRChordReleasePairWindow = 0.15;
 static NSTimer *holdTimer = nil;
 static NSTimer *maxRecordTimer = nil;
@@ -1255,12 +1255,11 @@ static BOOL VCRAudioChordEnabled(void) {
     return vcrEnabled && vcrVolumeChordTrigger;
 }
 
-// The release half of the chord, in ONE place: the armed path (VCRCheckChord) and the release-pairing
-// path (VCRVolumeButtonEvent, for presses whose press-down was never reported) must resolve the same
-// way, or "press both to stop" would behave differently depending on which event arrived.
+// The release half of the chord, reached from ONE place only (VCRCheckChord, behind its "a chord was
+// actually pressed" guard), so "press both to stop" cannot behave differently depending on which event
+// arrived and no single button or the power button can reach it.
 // Order is deliberate: stopping wins over everything, then the long hold, then the audio toggle.
 static void VCRResolveChord(NSInteger stage) {
-    vcrLastChordResolveAt = CFAbsoluteTimeGetCurrent();
     // Stopping must never depend on how long the buttons were held. A quick tap used to do nothing at
     // all (stage stayed 0), which is exactly the "REC will not turn off" report.
     if (vcrCameraRecording || isRecording) {
@@ -1678,22 +1677,28 @@ static void VCRVolumeButtonEvent(BOOL isIncrease, BOOL isDown) {
                     VCRDebugBump(@"debugChordCounts", @"paired-press");
                 }
             } else {
-                // Release-side chord. Press-down is not reported for every press on this build, and a
-                // chord that can only arm from a press-down does nothing at all when the down never
-                // arrives. Two guards keep this from double-firing: the chord must not already be in
-                // flight, and nothing may have been resolved a moment ago (when the down WAS reported,
-                // the first release resolves the chord and the second release arrives ~6 ms later).
+                // A release is NOT a chord. Press-down IS reported for every volume press on this build
+                // (debugPressTypes is symmetric: began102=241/ended102=241, began103=208/ended103=208),
+                // so the press branch above is the only thing that arms. The release-pairing rule that
+                // used to resolve a chord from two lone releases was built on the opposite reading of a
+                // counter the power button contaminates: the power button calls both of these up
+                // selectors ~5 ms apart with no press-down behind either (device log: "volbtn + up",
+                // "volbtn - up", then a recording started), and accepting that pair as a chord is what
+                // the device owner reported as "I pressed the power button and it started like the
+                // volume chord". The pattern is counted now, never acted on.
                 NSTimeInterval now = CFAbsoluteTimeGetCurrent();
+                NSTimeInterval ownDownAt = isIncrease ? vcrVolumeUpPressedAt : vcrVolumeDownPressedAt;
+                if (!vcrChordPressed && (now - ownDownAt) > 1.0) {
+                    // This button was not pressed a second ago yet its release arrived: the power
+                    // button's phantom. Counted, never logged - the power button is pressed far too
+                    // often to put in a 14-line ring.
+                    VCRDebugBump(@"debugChordCounts", @"up-without-press");
+                }
                 if (isIncrease) vcrVolumeUpReleasedAt = now; else vcrVolumeDownReleasedAt = now;
                 NSTimeInterval otherRelease = isIncrease ? vcrVolumeDownReleasedAt : vcrVolumeUpReleasedAt;
-                if (!vcrChordPressed &&
-                    (now - vcrLastChordResolveAt) > VCRChordReleasePairWindow &&
+                if ((now - vcrVolumeUpPressedAt) > 1.0 && (now - vcrVolumeDownPressedAt) > 1.0 &&
                     otherRelease > 0.0 && (now - otherRelease) <= VCRChordReleasePairWindow) {
-                    VCRDebugBump(@"debugChordCounts", @"release-pair");
-                    VCRDebugEvent([NSString stringWithFormat:@"volbtn chord from paired releases (%.0f ms apart, no down reported)",
-                                   (now - otherRelease) * 1000.0]);
-                    VCRResolveChord(0);   // a release carries no hold length, so: the quick-press gesture
-                    return;               // VCRResolveChord just did everything this event would do
+                    VCRDebugBump(@"debugChordCounts", @"release-pair-ignored");
                 }
             }
             VCRCheckChord();

@@ -87,7 +87,17 @@ also records every class on the device whose name looks like a privacy/sensor/mi
   connection) used to leave `vcrCameraRecording` set with nothing recording; every later chord then hit
   the "while recording, the release means STOP" rule and did nothing. A 2 s watchdog now clears the flag
   and says so, so the next chord works instead of the tweak looking dead.
-- The chord's press-down selectors are not reported for every press on iOS 16.4.1 (device tally: 825
-  press-ups against 283 press-downs). Both buttons releasing inside 150 ms is therefore also treated as
-  the chord, which is what makes a quick press work when the press-down never arrives.
+- The chord is armed and resolved by real presses only. An earlier build also resolved it from two lone
+  releases 150 ms apart, on the reading that the press-down selectors are not reported for every press
+  (device tally: 825 press-ups against 283 press-downs). That tally is contaminated: the power button
+  fires both of those up selectors. Device log 2026-10-12 00:55:14, "volbtn + up" and "volbtn - up"
+  7 ms apart with no press-down behind either, and the tweak started a recording - reported as "I
+  pressed the power button and it started like the volume chord". The UIPress path is exactly
+  symmetric (began102=241/ended102=241, began103=208/ended103=208), so press-downs are reported;
+  a lone release pair now only increments `release-pair-ignored` / `up-without-press`.
+- Unverified: if the power button is pressed *while* an armed chord is held, its phantom ups still
+  clear the volume-button flags through `SBVolumeHardwareButtonActions`, which would resolve the chord
+  early (an audio toggle instead of video). `up-without-press` counts that pattern; no fix is applied
+  until the counter shows it happens, because the last blind fix for this area is what started a
+  recording on a power press.
 - An iOS 15.x or 17.x device has not been tested yet; those rows stay `unverified` until one is.
