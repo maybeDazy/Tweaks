@@ -1,4 +1,4 @@
-ARCHS = arm64 arm64e
+ARCHS = arm64e
 TARGET = iphone:clang:16.5:15.0   # pinned: CI used iPhoneOS16.5.sdk; matches the documented 15.0 floor
 
 # Build with:
