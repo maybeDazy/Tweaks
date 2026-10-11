@@ -218,7 +218,7 @@
 			<key>title</key>
 			<string>Audio Recording Quality</string>
 			<key>footerText</key>
-			<string>Codec and Bitrate decide how good a voice recording sounds. AAC with an explicit bitrate is the normal choice. ALAC and Linear PCM are lossless: no quality loss at all, but far bigger files, and Linear PCM also changes the container to .wav. Bitrate applies to AAC only. Stereo uses the iPhone microphone array; mono halves the size. These settings apply to the video's audio track too, which always stays AAC.</string>
+			<string>Codec and Bitrate decide how good a voice recording sounds. AAC with an explicit bitrate is the normal choice. ALAC and Linear PCM are lossless: no quality loss at all, but far bigger files, and Linear PCM also changes the container to .wav. Bitrate applies to AAC only. Stereo uses the iPhone microphone array; mono halves the size. Video audio is not affected: iOS has no movie-output audioSettings.</string>
 		</dict>
 		<dict>
 			<key>cell</key>

@@ -887,19 +887,10 @@ static BOOL VCRCameraPrepareSession(BOOL forVideo) {
         vcrCaptureSession.sessionPreset = preset;
         if (vcrMovieOutput && [vcrCaptureSession canAddOutput:vcrMovieOutput]) [vcrCaptureSession addOutput:vcrMovieOutput];
         else VCRLog(@"Camera: cannot add movie output");
-        // Video carries audio too, and without an explicit setting the movie output takes a low-bitrate
-        // AAC mono default. Movies always use AAC, so the codec preference does not apply here.
-        if (vcrMovieOutput) {
-            vcrMovieOutput.audioSettings = @{
-                AVFormatIDKey: @(kAudioFormatMPEG4AAC),
-                AVSampleRateKey: @(vcrAudioSampleRate),
-                AVNumberOfChannelsKey: @(vcrAudioChannels),
-                AVEncoderBitRateKey: @(vcrAudioBitrate),
-                AVEncoderAudioQualityKey: @(AVAudioQualityMax)
-            };
-            VCRLog(@"Camera: movie audio %ld Hz %ld ch %ld kbps AAC", (long)vcrAudioSampleRate,
-                   (long)vcrAudioChannels, (long)(vcrAudioBitrate / 1000));
-        }
+        // Note: AVCaptureMovieFileOutput has no audioSettings on iOS (that property is macOS only), so
+        // the video's audio track keeps the format the capture session picks for the microphone. The
+        // quality preferences below apply to voice recordings; improving video audio would mean
+        // selecting an activeFormat on the microphone input instead.
         // Microphone channel: without an audio input the movie output records no audio track at all.
         if (vcrCameraRecordAudio) {
             AVCaptureDevice *mic = [AVCaptureDevice defaultDeviceWithMediaType:AVMediaTypeAudio];

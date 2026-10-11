@@ -476,8 +476,8 @@ check("lossless codecs are wired with the matching container",
       has('ext = @"wav"') and has("VCRTimestampFilenameWithExt(ext)"))
 check("sample rate and bitrate preferences are clamped",
       has("wantedRate >= 8000 && wantedRate <= 48000") and has("wantedKbps >= 32 && wantedKbps <= 320"))
-check("video audio inherits the same quality settings",
-      has("vcrMovieOutput.audioSettings"))
+check("the video path does not use the macOS-only audioSettings property",
+      "vcrMovieOutput.audioSettings" not in T)
 for key, want in [("audioCodec", 3), ("audioSampleRate", 5), ("audioChannels", 2), ("audioBitrate", 5)]:
     c = cell_for_key(key)
     check("audio quality row %s present with %d choices" % (key, want),

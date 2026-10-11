@@ -141,7 +141,9 @@ AAC Bitrate   320 / 256 / 192 / 128 / 96 kbps   (AAC 일 때만 적용)
 - **ALAC · Linear PCM 은 무손실**입니다. 음질 손실이 전혀 없지만 파일이 훨씬 커지고(대략 3~10배),
   Linear PCM 은 컨테이너가 `.wav` 로 바뀝니다.
 - Stereo 는 iPhone 마이크 어레이를 사용합니다. 모노는 파일이 절반입니다.
-- 영상의 소리 트랙도 같은 설정을 따릅니다(영상은 AAC 고정).
+- 영상의 소리 트랙은 이 설정의 영향을 받지 않습니다 — iOS에는 movie output용 audioSettings가
+  없어서(그건 macOS API) 캡처 세션이 고른 마이크 포맷을 그대로 씁니다. 영상 소리를 올리려면 마이크
+  입력의 activeFormat을 직접 고르는 방식이 필요합니다.
 - 녹음 시작 시 로그에 실제 사용된 포맷이 남습니다:
   `Recording started: .../VCR_....m4a (aac 48000 Hz 2 ch 192 kbps)`
 
