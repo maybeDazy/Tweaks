@@ -398,6 +398,23 @@ check("the privacy indicator is off until the preference turns it on",
 check("the privacy-indicator hooks substitute the value instead of swallowing the call",
       T.count("%orig(vcrHidePrivacyDot") >= 6,
       "each indicator hook must call %orig with the substituted alpha/hidden value")
+# The one deliberate exception to "always call %orig": the sensor-activity update is what tells
+# SpringBoard to draw the dot, so the suppression has to drop it. It stays preference-gated and inside
+# its own class guard, and this check is what keeps that true.
+check("the sensor-activity suppression is the named exception and stays preference-gated",
+      "%init(VCRSensorActivityHooks)" in T and 'objc_getClass("SBSensorActivityDataProvider")' in T
+      and "if (vcrHidePrivacyDot) return;" in T,
+      "the sensor-activity hook must stay class-guarded and gated on hidePrivacyDot")
+
+# ── A camera start that fails must not lock the chord out ──
+check("a video start that never reaches isRecording clears its flag by itself",
+      "static void VCRWatchVideoStart(void)" in T and "VCRWatchVideoStart();" in T
+      and "if (output.isRecording) return;" in T and "camera start watchdog" in T,
+      "the start watchdog is missing: a failed video start would leave vcrCameraRecording set and "
+      "every later chord would be swallowed by the STOP branch")
+check("the watchdog cannot fire a false Video failed notification",
+      "if (!vcrCameraRecording) return;" in T,
+      "the watchdog must bail out when the flag was already settled by a real stop")
 
 # ── The chord resolves in exactly one place, and STOP does not depend on the hold length ──
 _resolve_chord = (T.split("static void VCRResolveChord")[1].split("\n}\n")[0]

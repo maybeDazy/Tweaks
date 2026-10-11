@@ -30,6 +30,7 @@ a real device build.
 | `SpringBoard` | `sendEvent:`, `pressesBegan:withEvent:`, `pressesEnded:withEvent:` (ungrouped) | never absent |
 | `SBVolumeHardwareButtonActions` | `volumeIncreasePressDownWithModifiers:`, `volumeIncreasePressUp`, `volumeDecreasePressDownWithModifiers:`, `volumeDecreasePressUp` | press path falls back to the UIPress hooks |
 | `SBVolumeControl` | `increaseVolume`, `decreaseVolume` | press path is the only trigger |
+| `SBSensorActivityDataProvider` | `_handleNewDomainData:` (gated on `hidePrivacyDot`; the one place that does not call `%orig`) | nothing is hidden |
 | `_UIStatusBarIndicatorBlobView` | `setAlpha:`, `setHidden:`, `didMoveToWindow` | iOS 16+ uses the item view below instead |
 | `_UIStatusBarPrivacyIndicatorItemView` | `setAlpha:`, `setHidden:` | the blob view above covers 14/15 |
 | `_UIPrivacyIndicatorBlobView` | `setAlpha:`, `setHidden:` | nothing to do (name is 17+) |
@@ -37,11 +38,15 @@ a real device build.
 | `MTMicrophoneUsageView` | `setAlpha:`, `setHidden:` | nothing to do |
 | `MTPrivacyIndicatorViewController` | `_setIndicatorVisible:animated:` | nothing to do |
 
-The six privacy-indicator classes are the one row set that is not device-observed in the sense above:
-they come from the build the owner ran before 2026-05-20 and are restored on request. Safety comes from
-the structure instead of the name - each is hooked only behind its own `objc_getClass` guard, every hook
-still calls `%orig`, and the tweak records which of the six the running OS actually has in
-`debugPrivacyIndicatorClasses` on every load. A name that no longer exists is inert, not fatal.
+The six privacy-indicator classes above are the one row set that is not device-observed in the sense
+this file means: they come from the build the owner ran before 2026-05-20 and are restored on request.
+Measured on iOS 16.4.1, **none of the six exists** (`debugPrivacyIndicatorClasses` recorded
+`hidePrivacyDot=1 (none present)`), so they install nothing there and the dot has to be hidden by the
+`SBSensorActivityDataProvider` row instead. Each one is hooked only behind its own `objc_getClass` guard,
+every one of them still calls `%orig`, and the load records which of the six the OS actually has - so a
+wrong name is inert, and the next load says whether the restore did anything at all. `VCRDumpPrivacyClasses`
+also records every class on the device whose name looks like a privacy/sensor/microphone indicator
+(`debugPrivacyClassCandidates`), so the surviving names come from the running OS instead of another guess.
 
 ## Path rules used by this tweak
 
@@ -73,9 +78,15 @@ still calls `%orig`, and the tweak records which of the six the running OS actua
 - The tweak is SpringBoard-only by design (`Filter = { Bundles = (com.apple.springboard); }`): it is not
   injected into apps or daemons, so it cannot affect the boot chain and it cannot hang a third-party app.
 - The microphone/camera privacy indicator is hidden only while **Hide Privacy Dot** is on; with it off
-  (the default) every indicator hook passes the real value through. The hooks force the indicator
-  *views* to zero alpha - they do not block the sensor-activity data path - so nothing else that reads
-  that data is affected.
+  (the default) every indicator hook passes the real value through. Where the version's indicator view
+  classes exist they are forced to zero alpha; where they do not (measured: all six are absent on
+  16.4.1) the sensor-activity update itself is dropped, which is the one hook in the tweak that does not
+  call `%orig`. Nothing else that reads sensor-activity data is affected on this build, because the
+  provider is SpringBoard's own and the tweak is injected into SpringBoard only.
+- A video start that never reaches `isRecording` (session not running, media services reset, no usable
+  connection) used to leave `vcrCameraRecording` set with nothing recording; every later chord then hit
+  the "while recording, the release means STOP" rule and did nothing. A 2 s watchdog now clears the flag
+  and says so, so the next chord works instead of the tweak looking dead.
 - The chord's press-down selectors are not reported for every press on iOS 16.4.1 (device tally: 825
   press-ups against 283 press-downs). Both buttons releasing inside 150 ms is therefore also treated as
   the chord, which is what makes a quick press work when the press-down never arrives.

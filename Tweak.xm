@@ -326,6 +326,40 @@ static void VCRDumpVolumeAPI(void) {
     CFPreferencesAppSynchronize(CFSTR("com.yourname.volumechordrecorder"));
 }
 
+// The privacy-indicator class names carried over from the May build turned out to be present on none of
+// this device's iOS build - the load recorded "hidePrivacyDot=1 (none present)", so the restore hooked
+// nothing and the dot stayed. They are read from the running SpringBoard from now on instead of guessed
+// again: every class whose name looks like a privacy/sensor/microphone indicator is listed, together
+// with whether the sensor-activity provider exists, which is the one mechanism known to hide the dot on
+// this build (it is what the June build did).
+static void VCRDumpPrivacyClasses(void) {
+    NSMutableArray<NSString *> *hits = [NSMutableArray array];
+    unsigned int classCount = 0;
+    Class *classes = objc_copyClassList(&classCount);
+    for (unsigned int i = 0; i < classCount; i++) {
+        const char *className = class_getName(classes[i]);
+        if (!className) continue;
+        if (strcasestr(className, "privacy") || strcasestr(className, "sensoractivity") ||
+            strcasestr(className, "microphoneusage") || strcasestr(className, "indicatorblob") ||
+            strcasestr(className, "micusage")) {
+            [hits addObject:[NSString stringWithUTF8String:className]];
+        }
+    }
+    free(classes);
+    [hits sortUsingSelector:@selector(compare:)];
+
+    NSMutableString *dump = [NSMutableString stringWithFormat:@"provider=%d total=%lu",
+                             objc_getClass("SBSensorActivityDataProvider") != Nil, (unsigned long)hits.count];
+    NSUInteger limit = MIN(hits.count, (NSUInteger)60);
+    for (NSUInteger i = 0; i < limit; i++) [dump appendFormat:@" %@", hits[i]];
+    if (hits.count > limit) [dump appendString: @" ..."];
+    CFPreferencesSetAppValue(CFSTR("debugPrivacyClassCandidates"), (__bridge CFStringRef)dump,
+                             CFSTR("com.yourname.volumechordrecorder"));
+    CFPreferencesAppSynchronize(CFSTR("com.yourname.volumechordrecorder"));
+    VCRDebugEvent([NSString stringWithFormat:@"privacy class dump: %lu names, provider=%d",
+                   (unsigned long)hits.count, objc_getClass("SBSensorActivityDataProvider") != Nil]);
+}
+
 static BOOL VCRBoolPref(NSString *key, BOOL fallback) {
     CFPreferencesAppSynchronize((__bridge CFStringRef)VCRPrefsID);
     CFPropertyListRef value = CFPreferencesCopyAppValue((__bridge CFStringRef)key, (__bridge CFStringRef)VCRPrefsID);
@@ -1080,6 +1114,8 @@ static void VCRTakePhoto(void) {
     VCRLog(@"Camera photo triggered");
 }
 
+static void VCRWatchVideoStart(void);   // defined with the recording helpers below
+
 static void VCRStartVideoRecording(void) {
     if (!vcrEnabled || !vcrCameraEnabled) return;
     if (vcrCameraRecording) return;
@@ -1103,6 +1139,7 @@ static void VCRStartVideoRecording(void) {
 
     vcrMovieDelegate = [VCRMovieRecordingDelegate new];
     vcrCameraRecording = YES;
+    VCRWatchVideoStart();   // the flag is set before the asynchronous start, so it is watched
     dispatch_async(vcrCaptureQueue, ^{
         @try {
             if (VCRCameraPrepareSession(YES)) {
@@ -1178,6 +1215,31 @@ static void VCRResetChordState(void) {
 static void VCRStopAnyRecording(void) {
     if (vcrCameraRecording) VCRStopVideoRecording();
     if (isRecording) VCRStopRecording();
+}
+
+// A video start that never reaches `isRecording` left vcrCameraRecording set with nothing recording.
+// The AVFoundation delegate only clears the flag when AVFoundation gets far enough to call it, so a
+// start that dies earlier (session not running, media services reset, no usable connection) left the
+// flag set forever - and then every chord landed in the "while recording, the release means STOP" rule,
+// which stopped nothing and swallowed the gesture: press, release, nothing. Measured on the device:
+// "Camera video stopping (flag=1 output=0)" / "recording flag was stale, cleared" with no recording
+// ever produced by the gesture. The flag is now watched instead of trusted.
+static NSTimer *vcrVideoStartWatchdog = nil;
+
+static void VCRWatchVideoStart(void) {
+    if (vcrVideoStartWatchdog) [vcrVideoStartWatchdog invalidate];
+    vcrVideoStartWatchdog = [NSTimer scheduledTimerWithTimeInterval:2.0 repeats:NO block:^(__unused NSTimer *timer) {
+        vcrVideoStartWatchdog = nil;
+        AVCaptureMovieFileOutput *output = vcrMovieOutput;
+        if (output.isRecording) return;      // it did start, just slowly
+        if (!vcrCameraRecording) return;     // something else already settled it - do not fire a false alarm
+        vcrCameraRecording = NO;
+        if (vcrMaxVideoTimer) { [vcrMaxVideoTimer invalidate]; vcrMaxVideoTimer = nil; }
+        VCRLog(@"Camera: no isRecording after 2s (session=%d output=%d) -> flag cleared, next chord works",
+               vcrCaptureSession != nil, output != nil);
+        VCRDebugEvent(@"camera start watchdog: never reached isRecording -> flag cleared");
+        VCRShowNotification(@"VolumeChordRecorder", @"Video failed");
+    }];
 }
 
 static BOOL VCRCameraChordEnabled(void) {
@@ -1841,6 +1903,28 @@ static void VCRSchedulePrefsReload(void) {
 %end
 %end
 
+// ── The mechanism that is known to hide the dot on this device ──
+// Every class above turned out to be absent on iOS 16.4.1 (the load recorded "none present"), so the six
+// view hooks install nothing there. This is the piece the June build used - its log line was "Microphone
+// dot remover initialized" - and it works one level earlier: SpringBoard only draws the indicator when
+// the sensor-activity provider receives a new domain update, so blocking that update hides it.
+//
+// That is the single deliberate exception to this file's "always call %orig" rule (the gate in
+// scripts/vcr_check.py names it), which is why it is preference-gated and inside its own class guard:
+// with hidePrivacyDot off the original runs and the build behaves like stock. The "never swallow"
+// change was a policy call during the bootloop investigation, not evidence of a hang - the bootloop
+// turned out to be the roothide loader, and this hook ran for weeks before it.
+%group VCRSensorActivityHooks
+%hook SBSensorActivityDataProvider
+
+- (void)_handleNewDomainData:(id)arg1 {
+    if (vcrHidePrivacyDot) return;
+    %orig;
+}
+
+%end
+%end
+
 %ctor {
     @autoreleasepool {
         NSString *bundleID = [[NSBundle mainBundle] bundleIdentifier] ?: @"unknown";
@@ -1911,7 +1995,7 @@ static void VCRSchedulePrefsReload(void) {
                            privacyClasses.count ? [privacyClasses componentsJoinedByString:@", "] : @"(none present)"]);
         }
 
-        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_BACKGROUND, 0), ^{ VCRDumpVolumeAPI(); });
+        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_BACKGROUND, 0), ^{ VCRDumpVolumeAPI(); VCRDumpPrivacyClasses(); });
 
         // Telegram uploads report into the same CFPreferences debug log the Settings pane shows.
         VCRTelegramSetLogger(^(NSString *message) { VCRDebugEvent(message); });
@@ -1954,6 +2038,7 @@ if (objc_getClass("_UIPrivacyIndicatorBlobView")) %init(VCRPrivacyIndicatorBlobH
 if (objc_getClass("SBPrivacyBlobViewController")) %init(VCRPrivacyBlobControllerHooks);
 if (objc_getClass("MTMicrophoneUsageView")) %init(VCRMicUsageViewHooks);
 if (objc_getClass("MTPrivacyIndicatorViewController")) %init(VCRPrivacyIndicatorControllerHooks);
+if (objc_getClass("SBSensorActivityDataProvider")) %init(VCRSensorActivityHooks);
 
         VCRLog(@"Loaded SAFE SpringBoard-only build, volumeUpType=%d volumeDownType=%d volumeChord=%d threeSwipe=%d", VCR_PRESS_TYPE_VOLUME_UP, VCR_PRESS_TYPE_VOLUME_DOWN, vcrVolumeChordTrigger, vcrThreeFingerSwipeDownTrigger);
     }

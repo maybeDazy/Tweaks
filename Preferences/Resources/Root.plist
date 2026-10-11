@@ -34,7 +34,7 @@
 			<key>label</key>
 			<string>Privacy Indicator</string>
 			<key>footerText</key>
-			<string>Hides the iOS privacy indicator (the orange microphone dot and the green camera dot) by forcing every status-bar, MediaToolbox and SpringBoard indicator view to zero alpha. The classes differ per iOS version, so each one is hooked only if the running OS actually has it. Off by default: with the switch off every hook passes the real value straight through and the tweak changes nothing. Takes effect on the next indicator update; respring to clear a dot that is already on screen.</string>
+			<string>Hides the iOS privacy indicator (the orange microphone dot and the green camera dot). Two mechanisms, chosen by what the running iOS actually has: the indicator views are forced to zero alpha where those classes exist, and where they do not (measured: none of them is present on iOS 16.4.1) SpringBoard's sensor-activity update is dropped instead, which is what makes it draw the dot in the first place. Off by default: with the switch off nothing is changed. Takes effect on the next indicator update; respring to clear a dot that is already on screen.</string>
 		</dict>
 		<dict>
 			<key>cell</key>

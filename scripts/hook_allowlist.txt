@@ -4,6 +4,7 @@
 SpringBoard
 SBVolumeHardwareButtonActions
 SBVolumeControl
+SBSensorActivityDataProvider
 # Privacy-indicator classes, restored 2026-10-11. These are NOT device-verified names in the sense the
 # rule above means: they come from the build the device owner ran before 2026-05-20, and only the ones
 # the running OS actually has may be hooked. That is enforced structurally instead - each has its own
