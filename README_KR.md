@@ -124,6 +124,27 @@ Start/Stop Haptic Feedback: ON
   4-Finger Swipe Distance / Camera (Front/Back) / Lens (back camera) 1x·0.5x /
   Video Quality(카메라 앱처럼 해상도×fps 조합) / Hold Seconds / Use Microphone Channel in Video.
 
+### 음성녹음 품질 (Codec / Sample Rate / Channels / AAC Bitrate)
+
+설정 앱 → Volume Chord Recorder → **Audio Recording Quality** 에서 정합니다. 기본값은
+**AAC · 48 kHz · Stereo · 192 kbps** 입니다.
+
+```text
+Codec         AAC (.m4a) 192 kbps / ALAC Lossless (.m4a) / Linear PCM (.wav)
+Sample Rate   48 / 44.1 / 32 / 22.05 / 16 kHz
+Channels      Stereo (2ch) / Mono (1ch)
+AAC Bitrate   320 / 256 / 192 / 128 / 96 kbps   (AAC 일 때만 적용)
+```
+
+- 예전 설정은 `AVAudioQualityHigh` 만 지정하고 **비트레이트를 지정하지 않아** 인코더가 64 kbps 안팎
+  모노로 수렴했습니다(통화 품질). 지금은 비트레이트를 명시합니다.
+- **ALAC · Linear PCM 은 무손실**입니다. 음질 손실이 전혀 없지만 파일이 훨씬 커지고(대략 3~10배),
+  Linear PCM 은 컨테이너가 `.wav` 로 바뀝니다.
+- Stereo 는 iPhone 마이크 어레이를 사용합니다. 모노는 파일이 절반입니다.
+- 영상의 소리 트랙도 같은 설정을 따릅니다(영상은 AAC 고정).
+- 녹음 시작 시 로그에 실제 사용된 포맷이 남습니다:
+  `Recording started: .../VCR_....m4a (aac 48000 Hz 2 ch 192 kbps)`
+
 ### 파일 열기 / 햅틱
 
 - **Open Recordings in Filza**: 설정에서 버튼 한 번으로 녹화 폴더를 Filza로 엽니다

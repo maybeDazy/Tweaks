@@ -462,6 +462,34 @@ check("the packaged description does not advertise photo capture",
 check("the packaged description describes the two gestures",
       "quick press" in read_text("control") and "holding past" in read_text("control"))
 
+# --- 5k. audio recording quality ---
+check("audio quality defaults are high (48 kHz, stereo, 192 kbps, AAC)",
+      has("static NSInteger vcrAudioSampleRate = 48000") and
+      has("static NSInteger vcrAudioChannels = 2") and
+      has("static NSInteger vcrAudioBitrate = 192000") and
+      has('static NSString *vcrAudioCodec = @"aac"'))
+check("AAC recording now names a bitrate (the old settings asked only for AVAudioQualityHigh)",
+      has("settings[AVEncoderBitRateKey] = @(vcrAudioBitrate)") and
+      has("AVSampleRateKey: @44100") is False)
+check("lossless codecs are wired with the matching container",
+      has("format = kAudioFormatAppleLossless") and has("format = kAudioFormatLinearPCM") and
+      has('ext = @"wav"') and has("VCRTimestampFilenameWithExt(ext)"))
+check("sample rate and bitrate preferences are clamped",
+      has("wantedRate >= 8000 && wantedRate <= 48000") and has("wantedKbps >= 32 && wantedKbps <= 320"))
+check("video audio inherits the same quality settings",
+      has("vcrMovieOutput.audioSettings"))
+for key, want in [("audioCodec", 3), ("audioSampleRate", 5), ("audioChannels", 2), ("audioBitrate", 5)]:
+    c = cell_for_key(key)
+    check("audio quality row %s present with %d choices" % (key, want),
+          bool(c) and c.get("vcrKind") == "choice" and len(c.get("vcrTitles", [])) == want, repr(c)[:130])
+check("each audio quality row reads and writes its own key",
+      all((cell_for_key(k) or {}).get("vcrKey") == k
+          for k in ("audioCodec", "audioSampleRate", "audioChannels", "audioBitrate")))
+check("the audio quality group explains the lossless trade-off",
+      "ALAC and Linear PCM are lossless" in read_text("Preferences", "Resources", "Root.plist"))
+check("the recording log records the format actually used",
+      has("%@ %ld Hz %ld ch%@"))
+
 # --- 6. packaging ---
 check("postinst is packaged (after-install hook or layout/DEBIAN/postinst)",
       "after-install" in UP or os.path.exists(os.path.join(ROOT, "layout", "DEBIAN", "postinst")))

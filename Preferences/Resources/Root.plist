@@ -215,6 +215,140 @@
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
+			<key>title</key>
+			<string>Audio Recording Quality</string>
+			<key>footerText</key>
+			<string>Codec and Bitrate decide how good a voice recording sounds. AAC with an explicit bitrate is the normal choice. ALAC and Linear PCM are lossless: no quality loss at all, but far bigger files, and Linear PCM also changes the container to .wav. Bitrate applies to AAC only. Stereo uses the iPhone microphone array; mono halves the size. These settings apply to the video's audio track too, which always stays AAC.</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSLinkCell</string>
+			<key>label</key>
+			<string>Codec</string>
+			<key>vcrKind</key>
+			<string>choice</string>
+			<key>key</key>
+			<string>audioCodec</string>
+			<key>vcrKey</key>
+			<string>audioCodec</string>
+			<key>defaults</key>
+			<string>com.yourname.volumechordrecorder</string>
+			<key>default</key>
+			<string>aac</string>
+			<key>vcrTitles</key>
+			<array>
+				<string>AAC (.m4a) 192 kbps</string>
+				<string>ALAC Lossless (.m4a)</string>
+				<string>Linear PCM (.wav)</string>
+			</array>
+			<key>vcrValues</key>
+			<array>
+				<string>aac</string>
+				<string>alac</string>
+				<string>pcm</string>
+			</array>
+			<key>PostNotification</key>
+			<string>com.yourname.volumechordrecorder.prefschanged</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSLinkCell</string>
+			<key>label</key>
+			<string>Sample Rate</string>
+			<key>vcrKind</key>
+			<string>choice</string>
+			<key>key</key>
+			<string>audioSampleRate</string>
+			<key>vcrKey</key>
+			<string>audioSampleRate</string>
+			<key>defaults</key>
+			<string>com.yourname.volumechordrecorder</string>
+			<key>default</key>
+			<string>48000</string>
+			<key>vcrTitles</key>
+			<array>
+				<string>48 kHz</string>
+				<string>44.1 kHz</string>
+				<string>32 kHz</string>
+				<string>22.05 kHz</string>
+				<string>16 kHz</string>
+			</array>
+			<key>vcrValues</key>
+			<array>
+				<string>48000</string>
+				<string>44100</string>
+				<string>32000</string>
+				<string>22050</string>
+				<string>16000</string>
+			</array>
+			<key>PostNotification</key>
+			<string>com.yourname.volumechordrecorder.prefschanged</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSLinkCell</string>
+			<key>label</key>
+			<string>Channels</string>
+			<key>vcrKind</key>
+			<string>choice</string>
+			<key>key</key>
+			<string>audioChannels</string>
+			<key>vcrKey</key>
+			<string>audioChannels</string>
+			<key>defaults</key>
+			<string>com.yourname.volumechordrecorder</string>
+			<key>default</key>
+			<string>stereo</string>
+			<key>vcrTitles</key>
+			<array>
+				<string>Stereo (2ch)</string>
+				<string>Mono (1ch)</string>
+			</array>
+			<key>vcrValues</key>
+			<array>
+				<string>stereo</string>
+				<string>mono</string>
+			</array>
+			<key>PostNotification</key>
+			<string>com.yourname.volumechordrecorder.prefschanged</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSLinkCell</string>
+			<key>label</key>
+			<string>AAC Bitrate</string>
+			<key>vcrKind</key>
+			<string>choice</string>
+			<key>key</key>
+			<string>audioBitrate</string>
+			<key>vcrKey</key>
+			<string>audioBitrate</string>
+			<key>defaults</key>
+			<string>com.yourname.volumechordrecorder</string>
+			<key>default</key>
+			<string>192</string>
+			<key>vcrTitles</key>
+			<array>
+				<string>320 kbps</string>
+				<string>256 kbps</string>
+				<string>192 kbps</string>
+				<string>128 kbps</string>
+				<string>96 kbps</string>
+			</array>
+			<key>vcrValues</key>
+			<array>
+				<string>320</string>
+				<string>256</string>
+				<string>192</string>
+				<string>128</string>
+				<string>96</string>
+			</array>
+			<key>PostNotification</key>
+			<string>com.yourname.volumechordrecorder.prefschanged</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
 			<key>label</key>
 			<string>Camera Capture</string>
 			<key>footerText</key>

@@ -63,6 +63,12 @@ static NSString *vcrCameraPosition = @"back";        // back | front
 static NSString *vcrCameraLens = @"wide";            // wide (1x) | ultrawide (0.5x), back only
 static NSString *vcrCameraVideoQuality = @"1080p30"; // 720p30 | 1080p30 | 1080p60 | 4k30 | 4k60 | auto
 static NSString *vcrCameraPhotoQuality = @"quality"; // speed | balanced | quality
+// Audio recording quality. The old setup asked for AAC + AVAudioQualityHigh and named no bitrate,
+// which let the encoder settle around 64 kbps mono - a phone call. These are the real controls.
+static NSString *vcrAudioCodec = @"aac";             // aac | alac | pcm
+static NSInteger vcrAudioSampleRate = 48000;         // 16000 | 22050 | 32000 | 44100 | 48000
+static NSInteger vcrAudioBitrate = 192000;           // AAC only, bits per second
+static NSInteger vcrAudioChannels = 2;               // 1 mono | 2 stereo
 // Chord tiers by hold time (H = Hold Seconds), decided on RELEASE so a long hold never
 // fires two actions: [H,2H) => photo, [2H,3H) => video toggle, >=3H => audio toggle.
 // While anything is recording the chord always means STOP, at any tier.
@@ -353,11 +359,20 @@ vcrVolumeChordTrigger = VCRBoolPref(@"volumeChordTrigger", YES);
     vcrCameraLens = VCRStringPref(@"cameraLens", @"wide");
     vcrCameraVideoQuality = VCRStringPref(@"cameraVideoQuality", @"1080p30");
     vcrCameraPhotoQuality = VCRStringPref(@"cameraPhotoQuality", @"quality");
+    NSString *audioCodec = VCRStringPref(@"audioCodec", @"aac");
+    vcrAudioCodec = ([audioCodec isEqualToString:@"alac"] || [audioCodec isEqualToString:@"pcm"]) ? audioCodec : @"aac";
+    NSInteger wantedRate = [VCRStringPref(@"audioSampleRate", @"48000") integerValue];
+    vcrAudioSampleRate = (wantedRate >= 8000 && wantedRate <= 48000) ? wantedRate : 48000;
+    vcrAudioChannels = [VCRStringPref(@"audioChannels", @"stereo") isEqualToString:@"mono"] ? 1 : 2;
+    NSInteger wantedKbps = [VCRStringPref(@"audioBitrate", @"192") integerValue];
+    vcrAudioBitrate = ((wantedKbps >= 32 && wantedKbps <= 320) ? wantedKbps : 192) * 1000;
     vcrHapticOnStart = VCRBoolPref(@"hapticOnStart", YES);
     vcrHapticOnStop = VCRBoolPref(@"hapticOnStop", YES);
     NSString *hapticStrength = VCRStringPref(@"hapticStrength", @"medium");
     vcrHapticStrength = [hapticStrength isEqualToString:@"light"] ? 0 : ([hapticStrength isEqualToString:@"strong"] ? 2 : 1);
 
+    VCRLog(@"Audio prefs codec=%@ rate=%ld ch=%ld bitrate=%ldkbps", vcrAudioCodec,
+           (long)vcrAudioSampleRate, (long)vcrAudioChannels, (long)(vcrAudioBitrate / 1000));
     VCRLog(@"Camera prefs enabled=%d chord=%d swipe=%d swipeDistance=%.0f position=%@ lens=%@ quality=%@ photoQuality=%@ hapticStart=%d hapticStop=%d hapticStrength=%ld",
            vcrCameraEnabled, vcrCameraChordTrigger, vcrCameraSwipeTrigger, vcrCameraSwipeDistance,
            vcrCameraPosition, vcrCameraLens, vcrCameraVideoQuality, vcrCameraPhotoQuality,
@@ -601,14 +616,34 @@ static void VCRStartRecording(void) {
     [session setActive:YES error:&error];
     if (error) VCRLog(@"AVAudioSession active error: %@", error);
 
-    NSString *path = [dir stringByAppendingPathComponent:VCRTimestampFilename()];
+    // Quality is decided by the codec, the sample rate, the channel count and - for AAC - an explicit
+    // bitrate. Linear PCM needs a .wav container, ALAC and AAC both live in .m4a.
+    AudioFormatID format = kAudioFormatMPEG4AAC;
+    NSString *ext = @"m4a";
+    if ([vcrAudioCodec isEqualToString:@"alac"]) {
+        format = kAudioFormatAppleLossless;
+    } else if ([vcrAudioCodec isEqualToString:@"pcm"]) {
+        format = kAudioFormatLinearPCM;
+        ext = @"wav";
+    }
+    NSString *path = [dir stringByAppendingPathComponent:VCRTimestampFilenameWithExt(ext)];
     NSURL *url = [NSURL fileURLWithPath:path];
-    NSDictionary *settings = @{
-        AVFormatIDKey: @(kAudioFormatMPEG4AAC),
-        AVSampleRateKey: @44100,
-        AVNumberOfChannelsKey: @1,
-        AVEncoderAudioQualityKey: @(AVAudioQualityHigh)
-    };
+    NSMutableDictionary *settings = [@{
+        AVFormatIDKey: @(format),
+        AVSampleRateKey: @(vcrAudioSampleRate),
+        AVNumberOfChannelsKey: @(vcrAudioChannels),
+        AVEncoderAudioQualityKey: @(AVAudioQualityMax)
+    } mutableCopy];
+    if (format == kAudioFormatMPEG4AAC) {
+        settings[AVEncoderBitRateKey] = @(vcrAudioBitrate);
+    } else if (format == kAudioFormatAppleLossless) {
+        settings[AVEncoderBitDepthHintKey] = @16;   // 16-bit ALAC: lossless without doubling the size
+    } else {
+        settings[AVLinearPCMBitDepthKey] = @16;
+        settings[AVLinearPCMIsFloatKey] = @NO;
+        settings[AVLinearPCMIsBigEndianKey] = @NO;
+        settings[AVLinearPCMIsNonInterleaved] = @NO;
+    }
 
     recorder = [[AVAudioRecorder alloc] initWithURL:url settings:settings error:&error];
     if (error || !recorder) {
@@ -622,7 +657,9 @@ static void VCRStartRecording(void) {
     recorder.delegate = vcrRecorderDelegate;
     if ([recorder record]) {
         isRecording = YES;
-        VCRLog(@"Recording started: %@", path);
+        VCRLog(@"Recording started: %@ (%@ %ld Hz %ld ch%@)", path, vcrAudioCodec,
+               (long)vcrAudioSampleRate, (long)vcrAudioChannels,
+               format == kAudioFormatMPEG4AAC ? [NSString stringWithFormat:@" %ld kbps", (long)(vcrAudioBitrate / 1000)] : @"");
         VCRShowNotification(@"VolumeChordRecorder", @"S");
         if (maxRecordTimer) [maxRecordTimer invalidate];
         maxRecordTimer = [NSTimer scheduledTimerWithTimeInterval:vcrMaxRecordSeconds repeats:NO block:^(__unused NSTimer *timer) {
@@ -850,6 +887,19 @@ static BOOL VCRCameraPrepareSession(BOOL forVideo) {
         vcrCaptureSession.sessionPreset = preset;
         if (vcrMovieOutput && [vcrCaptureSession canAddOutput:vcrMovieOutput]) [vcrCaptureSession addOutput:vcrMovieOutput];
         else VCRLog(@"Camera: cannot add movie output");
+        // Video carries audio too, and without an explicit setting the movie output takes a low-bitrate
+        // AAC mono default. Movies always use AAC, so the codec preference does not apply here.
+        if (vcrMovieOutput) {
+            vcrMovieOutput.audioSettings = @{
+                AVFormatIDKey: @(kAudioFormatMPEG4AAC),
+                AVSampleRateKey: @(vcrAudioSampleRate),
+                AVNumberOfChannelsKey: @(vcrAudioChannels),
+                AVEncoderBitRateKey: @(vcrAudioBitrate),
+                AVEncoderAudioQualityKey: @(AVAudioQualityMax)
+            };
+            VCRLog(@"Camera: movie audio %ld Hz %ld ch %ld kbps AAC", (long)vcrAudioSampleRate,
+                   (long)vcrAudioChannels, (long)(vcrAudioBitrate / 1000));
+        }
         // Microphone channel: without an audio input the movie output records no audio track at all.
         if (vcrCameraRecordAudio) {
             AVCaptureDevice *mic = [AVCaptureDevice defaultDeviceWithMediaType:AVMediaTypeAudio];
