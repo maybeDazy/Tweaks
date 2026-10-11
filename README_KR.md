@@ -88,7 +88,9 @@ Start/Stop Haptic Feedback: ON
 - Three-Finger Swipe Down: 세 손가락 아래 스와이프로 녹음 시작/종료. 기본 ON
 - Swipe Distance: 세 손가락 스와이프 인식 거리. 기본 140
 - Volume Up + Down Trigger: 기존 볼륨 버튼 조합 트리거. 기본 OFF
-- Hold Seconds: 이 시간을 넘겨 떼면 영상, 안에 떼면 음성. 기본 2초(0은 미설정으로 보고 2초)
+- Camera Hold Seconds: 영상 임계값. 이 시간을 넘겨서 떼면 영상, 안에 떼면 음성. 기본 3초.
+  음성녹음은 홀드가 전혀 필요 없다(즉시). 예전 `Hold Seconds` 행은 쓰이지 않는다(표시만 남김).
+  참고: 어떤 단일 버튼(볼륨 한쪽, 전원)으로도 녹음이 시작되지 않는다 — 조합으로만 시작된다.
 - Max Record Seconds: 최대 녹음 시간. 기본 600초
 - Haptic Feedback: 시작은 1탭, 종료는 2탭(화면을 보지 않고 구분되도록)
 - Debug Gesture Logs: 세 손가락 제스처 디버그 로그 출력
@@ -103,8 +105,8 @@ Start/Stop Haptic Feedback: ON
 설정 앱 → Volume Chord Recorder → Camera Capture 에서 켭니다. 기본값은 ON입니다.
 
 ```text
-동시에 눌렀다가 Hold Seconds 안에 떼면   = 음성 (오디오 녹음 시작/정지 토글)
-동시에 누르고 Hold Seconds 를 넘겨서 떼면 = 영상 (녹화 시작/정지 토글)
+동시에 눌렀다가 떼면(즉시)                      = 음성 (오디오 녹음 시작/정지 토글)
+동시에 누르고 Camera Hold Seconds 를 넘겨서 떼면 = 영상 (녹화 시작/정지 토글)
 어느 쪽이든, 이미 녹화/녹음 중이면         = STOP
 ```
 

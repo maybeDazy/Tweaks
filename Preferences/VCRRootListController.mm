@@ -53,7 +53,7 @@ static void VCRPrefsLog(NSString *fmt, ...) {
         if (line.length > 0) [lines addObject:line];
     }
     [lines addObject:message];
-    while (lines.count > 8) [lines removeObjectAtIndex:0];
+    while (lines.count > 14) [lines removeObjectAtIndex:0];
     VCRPrefsSet(@"debugEvents", [lines componentsJoinedByString:@"\n"]);
 }
 
@@ -74,8 +74,29 @@ static void VCRPrefsRecordException(NSException *exception) {
     VCRPrefsSet(@"debugEvents", [lines componentsJoinedByString:@"\n"]);
 }
 
+static int vcrPrefsCrashDescriptor = -1;
+
+static void VCRPrefsSignalHandler(int signalNumber) {
+    if (vcrPrefsCrashDescriptor < 0) {
+        NSString *dir = VCRRecordingsDirPath();
+        if (dir.length) {
+            NSString *path = [dir stringByAppendingPathComponent:@"tweak-crash.log"];
+            vcrPrefsCrashDescriptor = open(path.fileSystemRepresentation, O_WRONLY | O_CREAT | O_APPEND, 0644);
+        }
+    }
+    if (vcrPrefsCrashDescriptor >= 0) {
+        char line[96];
+        int length = snprintf(line, sizeof line, "prefs fatal signal %d\n", signalNumber);
+        if (length > 0) write(vcrPrefsCrashDescriptor, line, (size_t)length);
+    }
+    signal(signalNumber, SIG_DFL);
+    raise(signalNumber);
+}
+
 __attribute__((constructor)) static void VCRPrefsInstallExceptionHandler(void) {
     NSSetUncaughtExceptionHandler(&VCRPrefsRecordException);
+    static const int signals[] = {SIGSEGV, SIGBUS, SIGABRT, SIGILL, SIGTRAP};
+    for (size_t i = 0; i < sizeof signals / sizeof signals[0]; i++) signal(signals[i], &VCRPrefsSignalHandler);
 }
 
 @interface VCRRootListController : PSListController
@@ -105,16 +126,23 @@ __attribute__((constructor)) static void VCRPrefsInstallExceptionHandler(void) {
 
 - (void)setPreferenceValue:(id)value specifier:(PSSpecifier *)specifier {
     NSString *key = [specifier propertyForKey:@"key"];
-    // Settings was reported to "abort" whenever any option is changed, yet no exception reaches the
-    // handler above and the tweak never sees a crash, so the failure is a stall or a kill rather than
-    // an exception. These two breadcrumbs make the next attempt self-diagnosing: if the ring ends on
-    // "prefs set" the write itself is where Settings died.
+    // Settings was reported to "abort" whenever any option is changed, yet no exception reached the
+    // handler above, so the failure is a stall or a kill rather than an exception. Every step below
+    // stamps the ring, so the last line names the step that never came back.
     NSDate *started = [NSDate date];
-    VCRPrefsLog(@"prefs set %@ = %@", key, value);
-    CFPreferencesSetAppValue((__bridge CFStringRef)key, (__bridge CFPropertyListRef)value, (__bridge CFStringRef)VCRPrefsID);
-    CFPreferencesAppSynchronize((__bridge CFStringRef)VCRPrefsID);
-    notify_post("com.yourname.volumechordrecorder.prefschanged");
-    VCRPrefsLog(@"prefs set %@ done in %.0f ms", key, -[started timeIntervalSinceNow] * 1000.0);
+    @try {
+        VCRPrefsLog(@"prefs set %@ = %@", key, value);
+        CFPreferencesSetAppValue((__bridge CFStringRef)key, (__bridge CFPropertyListRef)value, (__bridge CFStringRef)VCRPrefsID);
+        VCRPrefsLog(@"prefs set %@ stored", key);
+        CFPreferencesAppSynchronize((__bridge CFStringRef)VCRPrefsID);
+        VCRPrefsLog(@"prefs set %@ synced", key);
+        notify_post("com.yourname.volumechordrecorder.prefschanged");
+        VCRPrefsLog(@"prefs set %@ notified", key);
+        VCRPrefsLog(@"prefs set %@ done in %.0f ms", key, -[started timeIntervalSinceNow] * 1000.0);
+    } @catch (NSException *exception) {
+        VCRPrefsRecordException(exception);
+        @throw exception;
+    }
 }
 
 // ---- Custom rows -------------------------------------------------------------------------

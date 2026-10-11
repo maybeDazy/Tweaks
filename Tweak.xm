@@ -68,6 +68,9 @@ static NSString *vcrCameraPhotoQuality = @"quality"; // speed | balanced | quali
 static NSString *vcrAudioCodec = @"aac";             // aac | alac | pcm
 static NSInteger vcrAudioSampleRate = 48000;         // 16000 | 22050 | 32000 | 44100 | 48000
 static NSInteger vcrAudioBitrate = 192000;           // AAC only, bits per second
+// How long the chord must be held before it means "video". Separate from anything audio: the audio
+// gesture is a quick press and needs no hold at all, so this is purely the camera's threshold.
+static NSTimeInterval vcrCameraHoldSeconds = 3.0;
 static NSInteger vcrAudioChannels = 2;               // 1 mono | 2 stereo
 // Chord tiers by hold time (H = Hold Seconds), decided on RELEASE so a long hold never
 // fires two actions: [H,2H) => photo, [2H,3H) => video toggle, >=3H => audio toggle.
@@ -344,6 +347,11 @@ static void VCRLoadPrefs(void) {
     // made every tier (photo/video/audio) sit inside half a second, which is impossible to aim.
     double rawHoldSeconds = VCRDoublePref(@"holdSeconds", 0.0, 0.0, 10.0);
     vcrHoldSeconds = rawHoldSeconds > 0.0 ? MAX(0.2, rawHoldSeconds) : 2.0;
+    // The camera threshold is its own setting now. Fall back to the old holdSeconds when the new key
+    // was never written, so an update keeps the value the device already had.
+    double rawCameraHold = VCRDoublePref(@"cameraHoldSeconds", 0.0, 0.0, 30.0);
+    if (rawCameraHold > 0.0) vcrCameraHoldSeconds = MAX(0.2, rawCameraHold);
+    else if (rawHoldSeconds > 0.0) vcrCameraHoldSeconds = MAX(0.2, rawHoldSeconds);
     vcrMaxRecordSeconds = VCRDoublePref(@"maxRecordSeconds", 600.0, 5.0, 7200.0);
     // The quick-press audio gesture is the primary one now, so it is on unless switched off.
 vcrVolumeChordTrigger = VCRBoolPref(@"volumeChordTrigger", YES);
@@ -1171,9 +1179,15 @@ static void VCRCheckChord(void) {
         volumeUpPressed = NO;
         volumeDownPressed = NO;
 
+        // Nothing below may fire unless a chord was actually pressed. VCRCheckChord runs on EVERY
+        // button event - a single volume press, the power button, a volume intent - and without this
+        // guard the toggle mapping at the bottom ran for all of them: the reported "any button starts
+        // a recording" regression (introduced when the tier table was recut in ddb7235).
+        if (!chordWasPressed) return;
+
         // Stopping must never depend on how long the buttons were held. A quick tap used to do
         // nothing at all (stage stayed 0), which is exactly the "REC will not turn off" report.
-        if (chordWasPressed && (vcrCameraRecording || isRecording)) {
+        if (vcrCameraRecording || isRecording) {
             VCRLog(@"Chord release (stage %ld) -> STOP active recording", (long)stage);
             VCRDebugEvent(@"chord -> STOP");
             VCRStickyNote(@"debugLastAction", @"stop (released while recording)");
@@ -1204,7 +1218,7 @@ static void VCRCheckChord(void) {
     vcrChordPressed = YES;
     if (holdTimer) return; // already counting
 
-    NSTimeInterval holdNeeded = MAX(0.2, vcrHoldSeconds);
+    NSTimeInterval holdNeeded = MAX(0.2, vcrCameraHoldSeconds);
     VCRStickyNote(@"debugLastChordArmed", [NSString stringWithFormat:@"armed hold=%.1fs cam=%d aud=%d up=%d down=%d",
                                            holdNeeded, cameraChord, audioChord, volumeUpPressed, volumeDownPressed]);
     VCRDebugBump(@"debugChordCounts", @"armed");

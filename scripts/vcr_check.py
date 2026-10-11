@@ -176,8 +176,9 @@ check("on-screen notice is a non-interactive, self-hiding HUD",
 check("notice window attaches to a scene (iOS 13+ would not render otherwise)",
       has("window.windowScene = (UIWindowScene *)scene"))
 # Stopping a running capture must not require holding the chord long enough to open a tier.
-check("any chord release stops a running capture",
-      has("vcrChordPressed") and has("if (chordWasPressed && (vcrCameraRecording || isRecording))"))
+check("any pressed-chord release stops a running capture",
+      has("chordWasPressed") and
+      re.search(r"if \(vcrCameraRecording \|\| isRecording\) \{\s*\n\s*VCRLog\(@\"Chord release \(stage", T) is not None)
 check("video stop also trusts the file output, not only the flag",
       has("AVCaptureMovieFileOutput *output = vcrMovieOutput;") and has("output.isRecording"))
 check("REC is announced only after the recording actually starts",
@@ -272,7 +273,7 @@ check("paired presses arm the chord inside the press branch (never on a release)
       re.search(r"if \(isDown\) \{[\s\S]{0,1000}<= VCRChordPairWindow\)\s*\{\s*"
                 r"volumeUpPressed = YES;\s*volumeDownPressed = YES;", T) is not None)
 check("the pair-forced flags are cleared when the chord resolves",
-      re.search(r"volumeUpPressed = NO;\s*volumeDownPressed = NO;\s*\n\s*// Stopping must never depend",
+      re.search(r"volumeUpPressed = NO;\s*volumeDownPressed = NO;\s*\n\s*// Nothing below may fire",
                 T) is not None)
 check("SBVolumeControl is hooked as a second trigger source",
       has("%group VCRVolumeControlHooks") and has("- (void)increaseVolume {")
@@ -449,7 +450,7 @@ check("the camera footer describes the two-way chord, not a photo tier",
 
 check("the Korean README describes the two-way chord, not a photo tier",
       "= Photo" not in RM and "Photo Quality." not in RM and
-      "넘겨서 떼면 = 영상" in RM and "안에 떼면   = 음성" in RM)
+      "Camera Hold Seconds 를 넘겨서 떼면 = 영상" in RM and "떼면(즉시)                      = 음성" in RM)
 check("the Korean README says photos are no longer captured",
       "어떤 제스처로도 찍히지 않습니다" in RM)
 
@@ -496,6 +497,27 @@ marked = set(re.findall(r"__attribute__\(\(unused\)\)\s*\nstatic\s+[\w\s\*<>\[\]
 uncalled = [n for n in sorted(defs)
             if n not in marked and len(re.findall(r"\b%s\b" % re.escape(n), T)) < 2]
 check("no uncalled static function is left behind (the build errors on that)", not uncalled, repr(uncalled))
+
+# --- 5m. the chord guard and the separate camera hold ---
+check("a single button press can never toggle a recording (only a pressed chord may)",
+      has("if (!chordWasPressed) return;") and
+      has("chordWasPressed && (vcrCameraRecording || isRecording)") is False and
+      T.index("if (!chordWasPressed) return;") < T.index("BOOL heldToTheThreshold"))
+check("the camera hold is its own preference with its own fallback",
+      has('VCRDoublePref(@"cameraHoldSeconds"') and has("static NSTimeInterval vcrCameraHoldSeconds = 3.0") and
+      has("holdNeeded = MAX(0.2, vcrCameraHoldSeconds)") and "holdNeeded = MAX(0.2, vcrHoldSeconds)" not in T)
+check("the audio gesture stays a plain quick press",
+      has("Chord released before Hold Seconds -> audio toggle"))
+check("the bundle row for the camera hold exists and defaults to 3.0",
+      float((cell_for_key("cameraHoldSeconds") or {}).get("default", 0)) == 3.0)
+check("the legacy holdSeconds row is labelled as not used",
+      "not used" in (cell_for_key("holdSeconds") or {}).get("label", ""))
+check("the settings write path stamps every step into the ring",
+      has("prefs set %@ stored", MM) and has("prefs set %@ synced", MM) and has("prefs set %@ notified", MM))
+check("the settings bundle catches fatal signals into the tweak crash log",
+      "prefs fatal signal" in MM and "VCRPrefsSignalHandler" in MM)
+check("the prefs ring is big enough to hold a crash breadcrumb trail",
+      "lines.count > 14" in MM)
 
 # --- 6. packaging ---
 check("postinst is packaged (after-install hook or layout/DEBIAN/postinst)",
