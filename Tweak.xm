@@ -1040,7 +1040,10 @@ didFinishRecordingToOutputFileAtURL:(NSURL *)outputFileURL
     NSString *target = vcrCurrentVideoPath;
     vcrCurrentVideoPath = nil;
 
-    if (error) VCRLog(@"Camera video error: %@", error);
+    if (error) {
+        VCRLog(@"Camera video error: %@", error);
+        VCRStickyNote(@"debugLastCameraFailure", [NSString stringWithFormat:@"video delegate error: %@", error.localizedDescription]);
+    }
 
     if (target) {
         NSError *moveError = nil;
@@ -1153,6 +1156,7 @@ static void VCRStartVideoRecording(void) {
                 vcrCameraRecording = NO;
                 if (vcrMaxVideoTimer) { [vcrMaxVideoTimer invalidate]; vcrMaxVideoTimer = nil; }
                 VCRLog(@"Camera: video prepare failed, aborted");
+                VCRStickyNote(@"debugLastCameraFailure", @"video prepare failed (session config)");
                 dispatch_async(dispatch_get_main_queue(), ^{
                     VCRShowNotification(@"VolumeChordRecorder", @"Video failed");
                 });
@@ -1163,6 +1167,7 @@ static void VCRStartVideoRecording(void) {
             vcrCameraRecording = NO;
             if (vcrMaxVideoTimer) { [vcrMaxVideoTimer invalidate]; vcrMaxVideoTimer = nil; }
             VCRLog(@"Camera video exception: %@", exception.reason);
+            VCRStickyNote(@"debugLastCameraFailure", [NSString stringWithFormat:@"video exception: %@", exception.reason]);
             VCRDebugEvent([NSString stringWithFormat:@"camera video exception: %@", exception.reason]);
             dispatch_async(dispatch_get_main_queue(), ^{
                 VCRShowNotification(@"VolumeChordRecorder", @"Video failed");
@@ -1993,6 +1998,21 @@ static void VCRSchedulePrefsReload(void) {
             VCRStickyNote(@"debugPrivacyIndicatorClasses",
                           [NSString stringWithFormat:@"hidePrivacyDot=%d %@", vcrHidePrivacyDot,
                            privacyClasses.count ? [privacyClasses componentsJoinedByString:@", "] : @"(none present)"]);
+        }
+
+        // Video has never produced a single file on this device (282 captures, every one of them audio)
+        // while the microphone path works, so what SpringBoard is actually allowed to do is recorded
+        // where it can be read back - the log file this build would like to use is not writable from
+        // SpringBoard, which is exactly why the earlier TCC line was never seen.
+        {
+            long videoStatus = (long)[AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeVideo];
+            long audioStatus = (long)[AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio];
+            VCRStickyNote(@"debugCameraAuth",
+                          [NSString stringWithFormat:@"video=%ld audio=%ld video_devices=%lu audio_devices=%lu authorized_flag=%d",
+                           videoStatus, audioStatus,
+                           (unsigned long)[AVCaptureDevice devicesWithMediaType:AVMediaTypeVideo].count,
+                           (unsigned long)[AVCaptureDevice devicesWithMediaType:AVMediaTypeAudio].count,
+                           vcrCameraAuthorized]);
         }
 
         dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_BACKGROUND, 0), ^{ VCRDumpVolumeAPI(); VCRDumpPrivacyClasses(); });

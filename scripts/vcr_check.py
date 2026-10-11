@@ -415,6 +415,10 @@ check("a video start that never reaches isRecording clears its flag by itself",
 check("the watchdog cannot fire a false Video failed notification",
       "if (!vcrCameraRecording) return;" in T,
       "the watchdog must bail out when the flag was already settled by a real stop")
+check("the camera permission state and the last camera failure are readable from the device",
+      'VCRStickyNote(@"debugCameraAuth"' in T and T.count('VCRStickyNote(@"debugLastCameraFailure"') >= 3,
+      "record AVCaptureDevice authorization on load, and a reason at each of the three camera failure "
+      "points - the log file is not writable from SpringBoard, so a VCRLog line about it is invisible")
 
 # ── The chord resolves in exactly one place, and STOP does not depend on the hold length ──
 _resolve_chord = (T.split("static void VCRResolveChord")[1].split("\n}\n")[0]
