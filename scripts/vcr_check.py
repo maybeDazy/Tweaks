@@ -562,6 +562,22 @@ check("a video attempt records the state that decides whether it can start",
       has("connectionWithMediaType:AVMediaTypeVideo") and has("vcrCaptureSession.isRunning"),
       "the attempt and the 2 s watchdog must both record session.isRunning / connections / inputs / "
       "audio category - that pair is what identifies a movie start that never reaches isRecording")
+check("a video start is refused when the session did not start running",
+      has("if (!vcrCaptureSession.isRunning)") and
+      has('VCRStickyNote(@"debugLastCameraFailure", @"session not running after startRunning")') and
+      has('VCRShowNotification(@"VolumeChordRecorder", @"Camera busy")'),
+      "starting the movie output on a session that is not running is the silent failure this build "
+      "refuses, and it must name itself distinctly from a prepare failure")
+check("the session's own runtime error or interruption is recorded",
+      all(has(n) for n in ["AVCaptureSessionRuntimeErrorNotification",
+                           "AVCaptureSessionWasInterruptedNotification",
+                           "AVCaptureSessionDidStartRunningNotification",
+                           "AVCaptureSessionDidStopRunningNotification",
+                           "AVCaptureSessionInterruptionEndedNotification"]) and
+      has('VCRStickyNote(@"debugVideoSession"') and has("VCRVideoObserveSession();"),
+      "AVFoundation names the cause (runtime error / interruption reason, which is what happens when "
+      "another process holds the camera or the microphone); the observer must be armed on the session "
+      "and record what it says into debugVideoSession")
 check("the 4-finger swipe down toggles audio instead of taking a photo",
       has("Camera gesture swipe down -> audio toggle") and
       has("Camera gesture swipe up -> video toggle"))

@@ -786,6 +786,41 @@ static void VCRCameraCheckAuthorization(void) {
     }
 }
 
+// AVFoundation says out loud what the movie output cannot: a runtime error, or an interruption - which
+// is what happens when another process already holds the video device or the microphone. Those
+// notifications carry the NSError / the reason, so recording them names the cause instead of leaving a
+// "Video failed" with nothing behind it. One observer per session object, re-armed if it is rebuilt.
+static id vcrSessionObserver = nil;
+static AVCaptureSession *vcrObservedSession = nil;
+
+static void VCRVideoObserveSession(void) {
+    if (!vcrCaptureSession || vcrObservedSession == vcrCaptureSession) return;
+    NSNotificationCenter *center = [NSNotificationCenter defaultCenter];
+    if (vcrSessionObserver) { [center removeObserver:vcrSessionObserver]; vcrSessionObserver = nil; }
+    vcrObservedSession = vcrCaptureSession;
+    vcrSessionObserver = [center addObserverForName:nil object:vcrCaptureSession
+                                              queue:[NSOperationQueue mainQueue]
+                                         usingBlock:^(NSNotification *note) {
+        NSString *name = note.name;
+        if ([name isEqualToString:AVCaptureSessionRuntimeErrorNotification]) {
+            NSError *error = note.userInfo[AVCaptureSessionErrorKey];
+            VCRStickyNote(@"debugVideoSession", [NSString stringWithFormat:@"runtime error %ld: %@",
+                                                 (long)error.code, error.localizedDescription]);
+            VCRDebugEvent(@"camera session runtime error recorded");
+        } else if ([name isEqualToString:AVCaptureSessionWasInterruptedNotification]) {
+            NSNumber *reason = note.userInfo[AVCaptureSessionInterruptionReasonKey];
+            VCRStickyNote(@"debugVideoSession", [NSString stringWithFormat:@"interrupted reason=%@", reason ?: @"?"]);
+            VCRDebugEvent(@"camera session interrupted");
+        } else if ([name isEqualToString:AVCaptureSessionDidStartRunningNotification]) {
+            VCRStickyNote(@"debugVideoSession", @"session did start running");
+        } else if ([name isEqualToString:AVCaptureSessionDidStopRunningNotification]) {
+            VCRStickyNote(@"debugVideoSession", @"session did stop running");
+        } else if ([name isEqualToString:AVCaptureSessionInterruptionEndedNotification]) {
+            VCRStickyNote(@"debugVideoSession", @"interruption ended");
+        }
+    }];
+}
+
 static void VCRCameraEnsureSession(void) {
     if (vcrCaptureSession) return;
     if (!vcrCameraAuthorized) return;
@@ -802,6 +837,7 @@ static void VCRCameraEnsureSession(void) {
     }
     vcrMovieOutput = [[AVCaptureMovieFileOutput alloc] init];
     VCRLog(@"Camera: session object created");
+    VCRVideoObserveSession();
 }
 
 // Pick the capture device for the configured position (front/back) and lens (1x / 0.5x).
@@ -1163,6 +1199,20 @@ static void VCRStartVideoRecording(void) {
         @try {
             if (VCRCameraPrepareSession(YES)) {
                 VCRCameraStartRunningSync();
+                if (!vcrCaptureSession.isRunning) {
+                    // startRunning failed or the session is interrupted. Starting the movie output anyway
+                    // is what produced a silent "Video failed" with no error and no delegate callback, so
+                    // this is refused and named instead - and debugVideoSession carries what AVFoundation
+                    // actually said about it.
+                    vcrCameraRecording = NO;
+                    if (vcrMaxVideoTimer) { [vcrMaxVideoTimer invalidate]; vcrMaxVideoTimer = nil; }
+                    VCRStickyNote(@"debugLastCameraFailure", @"session not running after startRunning");
+                    VCRDebugEvent(@"camera session never started running -> video refused");
+                    dispatch_async(dispatch_get_main_queue(), ^{
+                        VCRShowNotification(@"VolumeChordRecorder", @"Camera busy");
+                    });
+                    return;
+                }
                 VCRStickyNote(@"debugVideoAtStart", VCRVideoAttemptState());
                 [vcrMovieOutput startRecordingToOutputFileURL:tempURL recordingDelegate:vcrMovieDelegate];
                 dispatch_async(dispatch_get_main_queue(), ^{
@@ -1292,13 +1342,13 @@ static void VCRResolveChord(NSInteger stage) {
     BOOL heldToTheThreshold = (stage >= 1);
     if (VCRCameraChordEnabled() && (heldToTheThreshold || !VCRAudioChordEnabled())) {
         VCRLog(@"Chord %@ -> video toggle", heldToTheThreshold ? @"held past Hold Seconds" : @"(audio chord off)");
-        VCRStickyNote(@"debugLastAction", @"video toggle");
+        VCRStickyNote(@"debugLastAction", @"video toggle (at press)");
         VCRToggleVideoRecording();
         return;
     }
     if (VCRAudioChordEnabled()) {
         VCRLog(@"Chord released before Hold Seconds -> audio toggle");
-        VCRStickyNote(@"debugLastAction", @"audio toggle (quick press)");
+        VCRStickyNote(@"debugLastAction", @"audio toggle (at press)");
         VCRToggleRecording();
         return;
     }
