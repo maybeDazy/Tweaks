@@ -538,22 +538,30 @@ check("the settings bundle leaves a breadcrumb around every change",
 
 # --- 5j. chord mapping: the press acts at once, a long hold upgrades to video, no photo ---
 _check_chord = T.split("static void VCRCheckChord")[1].split("\n}\n")[0]
-check("the chord acts at the press, and a long hold upgrades the audio to video",
+check("the chord acts at the press, and a long hold hands over to video",
       has("Chord released before Hold Seconds -> audio toggle") and
       has("Chord %@ -> video toggle") and has("BOOL heldToTheThreshold = (stage >= 1)") and
       has("VCRUpgradeAudioToVideo();") and
-      has("Chord held past Hold Seconds -> video takes over from the audio recording"))
+      has("Chord held past Hold Seconds -> video takes over (audio stopped first, as before)"))
 check("nothing reaches the photo capture any more",
       "VCRTakePhoto();" not in T and has("__attribute__((unused))\nstatic void VCRTakePhoto"))
 check("one hold threshold drives the video upgrade",
       has("acting now, hold past %.1fs upgrades audio to video") and
       "chordTimer2" not in T and "chordTimer3" not in T)
-check("a hold can never lose the recording the press already started",
-      has("didStartRecordingToOutputFileAtURL") and has("if (!vcrUpgradeFromAudio) return;") and
-      has("video live -> stopping the audio the press started") and
-      T.count("vcrUpgradeFromAudio = NO;") >= 4,
-      "the audio may only be stopped from the movie delegate's didStart (video really recording), and "
-      "every camera failure path must release the upgrade flag")
+_upgrade = T.split("static void VCRUpgradeAudioToVideo(void) {")[1].split("\n}\n")[0]
+check("a hold hands the audio over to video instead of running both at once",
+      "VCRStopRecording();" in _upgrade and "VCRToggleVideoRecording();" in _upgrade and
+      _upgrade.index("VCRStopRecording();") < _upgrade.index("VCRToggleVideoRecording();") and
+      "vcrUpgradeFromAudio" not in T,
+      "the device owner asked for the pre-0.0.20 exclusivity back: stop the audio, then start the video, "
+      "and no upgrade flag anywhere in the file")
+check("a video attempt records the state that decides whether it can start",
+      has("static NSString *VCRVideoAttemptState(void)") and
+      has('VCRStickyNote(@"debugVideoAtStart", VCRVideoAttemptState())') and
+      has('VCRStickyNote(@"debugVideoAfter2s", VCRVideoAttemptState())') and
+      has("connectionWithMediaType:AVMediaTypeVideo") and has("vcrCaptureSession.isRunning"),
+      "the attempt and the 2 s watchdog must both record session.isRunning / connections / inputs / "
+      "audio category - that pair is what identifies a movie start that never reaches isRecording")
 check("the 4-finger swipe down toggles audio instead of taking a photo",
       has("Camera gesture swipe down -> audio toggle") and
       has("Camera gesture swipe up -> video toggle"))

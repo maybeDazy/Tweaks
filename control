@@ -1,6 +1,6 @@
 Package: com.yourname.volumechordrecorder
 Name: VolumeChordRecorder
-Version: 0.0.20
+Version: 0.0.21
 Architecture: iphoneos-arm
 Description: SpringBoard-only recorder driven by a volume up/down chord: the action happens the moment
  both buttons go down - that starts or stops an audio recording, and a hold past the configured hold

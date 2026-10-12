@@ -106,7 +106,6 @@ static AVCaptureSession *vcrCaptureSession = nil;
 static AVCapturePhotoOutput *vcrPhotoOutput = nil;
 static AVCaptureMovieFileOutput *vcrMovieOutput = nil;
 static BOOL vcrCameraRecording = NO;
-static BOOL vcrUpgradeFromAudio = NO;   // a hold upgraded the audio the chord press started to video
 static BOOL vcrCameraAuthorized = NO;
 static dispatch_queue_t vcrCaptureQueue = nil;
 static NSTimer *vcrMaxVideoTimer = nil;
@@ -1032,29 +1031,12 @@ static void VCRCameraStopRunning(void) {
 
 @implementation VCRMovieRecordingDelegate
 
-// The hold upgrade starts video alongside the audio the press already began, and only stops that audio
-// once the movie output says it is really recording - so this callback is the moment the two overlap.
-// If AVFoundation never gets here (it does not on this device's failed starts) the audio simply keeps
-// recording, which is the safe end of the trade.
-- (void)captureOutput:(AVCaptureFileOutput *)output
-didStartRecordingToOutputFileAtURL:(NSURL *)outputFileURL
-   fromConnections:(NSArray<AVCaptureConnection *> *)connections {
-    if (!vcrUpgradeFromAudio) return;
-    vcrUpgradeFromAudio = NO;
-    dispatch_async(dispatch_get_main_queue(), ^{
-        VCRDebugEvent(@"video live -> stopping the audio the press started");
-        VCRStickyNote(@"debugLastAction", @"video live, audio stopped");
-        VCRStopRecording();
-    });
-}
-
 - (void)captureOutput:(AVCaptureFileOutput *)output
 didFinishRecordingToOutputFileAtURL:(NSURL *)outputFileURL
   fromConnections:(NSArray<AVCaptureConnection *> *)connections
             error:(NSError *)error {
     BOOL wasRecording = vcrCameraRecording;
     vcrCameraRecording = NO;
-    vcrUpgradeFromAudio = NO;   // whatever the outcome, the hold upgrade no longer owns the audio
     if (vcrMaxVideoTimer) { [vcrMaxVideoTimer invalidate]; vcrMaxVideoTimer = nil; }
     NSString *target = vcrCurrentVideoPath;
     vcrCurrentVideoPath = nil;
@@ -1136,6 +1118,21 @@ static void VCRTakePhoto(void) {
     VCRLog(@"Camera photo triggered");
 }
 
+// Everything that can keep a movie recording from starting, in one line, so a single read answers it: a
+// session that is not running, a movie output with no video connection, a microphone input that never
+// made it into the session, or an audio-session category left over from the audio recording. Written
+// once at the attempt and again by the 2 s watchdog, so the two readings show what changed. On this
+// device debugLastCameraFailure stays EMPTY and no delegate callback arrives, so the failure is neither
+// a config error nor an exception - the output simply never reaches isRecording.
+static NSString *VCRVideoAttemptState(void) {
+    return [NSString stringWithFormat:@"running=%d isRecording=%d conns=%lu videoConn=%d inputs=%lu cat=%@",
+            vcrCaptureSession.isRunning, vcrMovieOutput.isRecording,
+            (unsigned long)vcrMovieOutput.connections.count,
+            [vcrMovieOutput connectionWithMediaType:AVMediaTypeVideo] != nil ? 1 : 0,
+            (unsigned long)vcrCaptureSession.inputs.count,
+            [AVAudioSession sharedInstance].category];
+}
+
 static void VCRWatchVideoStart(void);   // defined with the recording helpers below
 
 static void VCRStartVideoRecording(void) {
@@ -1166,6 +1163,7 @@ static void VCRStartVideoRecording(void) {
         @try {
             if (VCRCameraPrepareSession(YES)) {
                 VCRCameraStartRunningSync();
+                VCRStickyNote(@"debugVideoAtStart", VCRVideoAttemptState());
                 [vcrMovieOutput startRecordingToOutputFileURL:tempURL recordingDelegate:vcrMovieDelegate];
                 dispatch_async(dispatch_get_main_queue(), ^{
                     VCRLog(@"Camera video recording started -> %@", path);
@@ -1173,7 +1171,6 @@ static void VCRStartVideoRecording(void) {
                 });
             } else {
                 vcrCameraRecording = NO;
-                vcrUpgradeFromAudio = NO;
                 if (vcrMaxVideoTimer) { [vcrMaxVideoTimer invalidate]; vcrMaxVideoTimer = nil; }
                 VCRLog(@"Camera: video prepare failed, aborted");
                 VCRStickyNote(@"debugLastCameraFailure", @"video prepare failed (session config)");
@@ -1185,7 +1182,6 @@ static void VCRStartVideoRecording(void) {
             // Same class of AVFoundation exception as the photo path: never let it escape, or the
             // host process (SpringBoard) dies and the device drops into safe mode.
             vcrCameraRecording = NO;
-            vcrUpgradeFromAudio = NO;
             if (vcrMaxVideoTimer) { [vcrMaxVideoTimer invalidate]; vcrMaxVideoTimer = nil; }
             VCRLog(@"Camera video exception: %@", exception.reason);
             VCRStickyNote(@"debugLastCameraFailure", [NSString stringWithFormat:@"video exception: %@", exception.reason]);
@@ -1259,8 +1255,8 @@ static void VCRWatchVideoStart(void) {
         AVCaptureMovieFileOutput *output = vcrMovieOutput;
         if (output.isRecording) return;      // it did start, just slowly
         if (!vcrCameraRecording) return;     // something else already settled it - do not fire a false alarm
+        VCRStickyNote(@"debugVideoAfter2s", VCRVideoAttemptState());
         vcrCameraRecording = NO;
-        vcrUpgradeFromAudio = NO;
         if (vcrMaxVideoTimer) { [vcrMaxVideoTimer invalidate]; vcrMaxVideoTimer = nil; }
         VCRLog(@"Camera: no isRecording after 2s (session=%d output=%d) -> flag cleared, next chord works",
                vcrCaptureSession != nil, output != nil);
@@ -1374,23 +1370,21 @@ static void VCRCheckChord(void) {
     }];
 }
 
-// The press starts audio at once, so "held past Hold Seconds" can no longer pick one of the two at the
-// release - it upgrades instead. The video starts alongside the recording and the audio is only stopped
-// once the movie output reports that it is really recording (VCRMovieRecordingDelegate): on this device
-// the camera start fails ("Video failed"), and stopping the audio first would throw away the recording
-// the press had already started.
+// The press starts audio at once, so "held past Hold Seconds" can no longer choose between the two at
+// the release - it hands over, exactly the way the release used to: the audio recording the press
+// started is stopped and the video takes its place. Exclusivity is deliberate and is what the device
+// owner asked for ("this overlaps with the recording, do it like before") after the build that started
+// both at once. VCRStopRecording deactivates the AVAudioSession synchronously, so the capture session
+// does not inherit a running microphone.
 static void VCRUpgradeAudioToVideo(void) {
-    if (!VCRAudioChordEnabled() || !VCRCameraChordEnabled()) return;
-    if (!isRecording || vcrCameraRecording) return;
-    VCRLog(@"Chord held past Hold Seconds -> video takes over from the audio recording");
-    VCRDebugEvent(@"chord held -> audio to video upgrade");
-    VCRStickyNote(@"debugLastAction", @"upgrade audio -> video (held)");
-    vcrUpgradeFromAudio = YES;
+    if (!VCRCameraChordEnabled() || vcrCameraRecording) return;
+    if (!VCRAudioChordEnabled()) return;   // the press started video directly; nothing to hand over
+    if (!isRecording) return;
+    VCRLog(@"Chord held past Hold Seconds -> video takes over (audio stopped first, as before)");
+    VCRDebugEvent(@"chord held -> audio stopped, video takes over");
+    VCRStickyNote(@"debugLastAction", @"held -> video (audio stopped)");
+    VCRStopRecording();
     VCRToggleVideoRecording();
-    if (!vcrCameraRecording) {
-        vcrUpgradeFromAudio = NO;
-        VCRDebugEvent(@"upgrade refused: camera did not start, audio keeps recording");
-    }
 }
 
 static NSMutableDictionary<NSValue *, NSValue *> *vcrGestureTouchPoints = nil;
