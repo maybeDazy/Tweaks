@@ -106,6 +106,7 @@ static AVCaptureSession *vcrCaptureSession = nil;
 static AVCapturePhotoOutput *vcrPhotoOutput = nil;
 static AVCaptureMovieFileOutput *vcrMovieOutput = nil;
 static BOOL vcrCameraRecording = NO;
+static BOOL vcrUpgradeFromAudio = NO;   // a hold upgraded the audio the chord press started to video
 static BOOL vcrCameraAuthorized = NO;
 static dispatch_queue_t vcrCaptureQueue = nil;
 static NSTimer *vcrMaxVideoTimer = nil;
@@ -1030,12 +1031,30 @@ static void VCRCameraStopRunning(void) {
 @end
 
 @implementation VCRMovieRecordingDelegate
+
+// The hold upgrade starts video alongside the audio the press already began, and only stops that audio
+// once the movie output says it is really recording - so this callback is the moment the two overlap.
+// If AVFoundation never gets here (it does not on this device's failed starts) the audio simply keeps
+// recording, which is the safe end of the trade.
+- (void)captureOutput:(AVCaptureFileOutput *)output
+didStartRecordingToOutputFileAtURL:(NSURL *)outputFileURL
+   fromConnections:(NSArray<AVCaptureConnection *> *)connections {
+    if (!vcrUpgradeFromAudio) return;
+    vcrUpgradeFromAudio = NO;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        VCRDebugEvent(@"video live -> stopping the audio the press started");
+        VCRStickyNote(@"debugLastAction", @"video live, audio stopped");
+        VCRStopRecording();
+    });
+}
+
 - (void)captureOutput:(AVCaptureFileOutput *)output
 didFinishRecordingToOutputFileAtURL:(NSURL *)outputFileURL
   fromConnections:(NSArray<AVCaptureConnection *> *)connections
             error:(NSError *)error {
     BOOL wasRecording = vcrCameraRecording;
     vcrCameraRecording = NO;
+    vcrUpgradeFromAudio = NO;   // whatever the outcome, the hold upgrade no longer owns the audio
     if (vcrMaxVideoTimer) { [vcrMaxVideoTimer invalidate]; vcrMaxVideoTimer = nil; }
     NSString *target = vcrCurrentVideoPath;
     vcrCurrentVideoPath = nil;
@@ -1154,6 +1173,7 @@ static void VCRStartVideoRecording(void) {
                 });
             } else {
                 vcrCameraRecording = NO;
+                vcrUpgradeFromAudio = NO;
                 if (vcrMaxVideoTimer) { [vcrMaxVideoTimer invalidate]; vcrMaxVideoTimer = nil; }
                 VCRLog(@"Camera: video prepare failed, aborted");
                 VCRStickyNote(@"debugLastCameraFailure", @"video prepare failed (session config)");
@@ -1165,6 +1185,7 @@ static void VCRStartVideoRecording(void) {
             // Same class of AVFoundation exception as the photo path: never let it escape, or the
             // host process (SpringBoard) dies and the device drops into safe mode.
             vcrCameraRecording = NO;
+            vcrUpgradeFromAudio = NO;
             if (vcrMaxVideoTimer) { [vcrMaxVideoTimer invalidate]; vcrMaxVideoTimer = nil; }
             VCRLog(@"Camera video exception: %@", exception.reason);
             VCRStickyNote(@"debugLastCameraFailure", [NSString stringWithFormat:@"video exception: %@", exception.reason]);
@@ -1239,6 +1260,7 @@ static void VCRWatchVideoStart(void) {
         if (output.isRecording) return;      // it did start, just slowly
         if (!vcrCameraRecording) return;     // something else already settled it - do not fire a false alarm
         vcrCameraRecording = NO;
+        vcrUpgradeFromAudio = NO;
         if (vcrMaxVideoTimer) { [vcrMaxVideoTimer invalidate]; vcrMaxVideoTimer = nil; }
         VCRLog(@"Camera: no isRecording after 2s (session=%d output=%d) -> flag cleared, next chord works",
                vcrCaptureSession != nil, output != nil);
@@ -1292,6 +1314,8 @@ static void VCRResolveChord(NSInteger stage) {
 //   while anything is recording  : STOP, whatever the hold length
 // Photo is deliberately not part of this any more: the chord is for the two capture modes that are
 // actually wanted, and a three-way mapping made a plain "press both" ambiguous.
+static void VCRUpgradeAudioToVideo(void);   // defined with the chord helpers below, called by the hold timer
+
 static void VCRCheckChord(void) {
     BOOL bothPressed = volumeUpPressed && volumeDownPressed;
 
@@ -1315,30 +1339,58 @@ static void VCRCheckChord(void) {
         // guard the toggle mapping at the bottom ran for all of them: the reported "any button starts
         // a recording" regression (introduced when the tier table was recut in ddb7235).
         if (!chordWasPressed) return;
-        VCRResolveChord(stage);
+        // Nothing left to do here: the press already acted (the resolve call above), so the release
+        // only reports itself. Anything that still has to happen on a long hold is done by the hold
+        // timer, not by the release - which is exactly what "start/stop the moment both are pressed"
+        // means.
         return;
     }
 
     if (!VCRCameraChordEnabled() && !VCRAudioChordEnabled()) { VCRResetChordState(); return; }
     vcrChordPressed = YES;
-    if (holdTimer) return; // already counting
+    if (holdTimer) return; // already counting, and the press action already ran
 
     NSTimeInterval holdNeeded = MAX(0.2, vcrCameraHoldSeconds);
     VCRStickyNote(@"debugLastChordArmed", [NSString stringWithFormat:@"armed hold=%.1fs cam=%d aud=%d up=%d down=%d",
                                            holdNeeded, VCRCameraChordEnabled(), VCRAudioChordEnabled(),
                                            volumeUpPressed, volumeDownPressed]);
     VCRDebugBump(@"debugChordCounts", @"armed");
-    VCRLog(@"Volume chord down; release before %.1fs = audio, hold past it = video (cam=%d aud=%d)",
+    VCRLog(@"Volume chord down; acting now, hold past %.1fs upgrades audio to video (cam=%d aud=%d)",
            holdNeeded, VCRCameraChordEnabled(), VCRAudioChordEnabled());
 
-    // Exactly one threshold now. The tick tells you the chord has become the video gesture, so the
-    // hold never has to be guessed.
+    // The action happens HERE, at the press. Waiting for the release was the device owner's complaint
+    // ("I have to let go before it starts"); STOP wins over everything and is immediate, so pressing
+    // both while anything records stops it at the press itself.
+    VCRResolveChord(0);
+
+    // Exactly one threshold, and it no longer chooses between audio and video (the press already
+    // started audio): the tick means "let go now and audio stays, keep holding and video takes over".
     holdTimer = [NSTimer scheduledTimerWithTimeInterval:holdNeeded repeats:NO block:^(__unused NSTimer *t1) {
         holdTimer = nil;
         if (!(volumeUpPressed && volumeDownPressed)) return;
         vcrChordStage = 1;
         VCRHapticTick();
+        VCRUpgradeAudioToVideo();
     }];
+}
+
+// The press starts audio at once, so "held past Hold Seconds" can no longer pick one of the two at the
+// release - it upgrades instead. The video starts alongside the recording and the audio is only stopped
+// once the movie output reports that it is really recording (VCRMovieRecordingDelegate): on this device
+// the camera start fails ("Video failed"), and stopping the audio first would throw away the recording
+// the press had already started.
+static void VCRUpgradeAudioToVideo(void) {
+    if (!VCRAudioChordEnabled() || !VCRCameraChordEnabled()) return;
+    if (!isRecording || vcrCameraRecording) return;
+    VCRLog(@"Chord held past Hold Seconds -> video takes over from the audio recording");
+    VCRDebugEvent(@"chord held -> audio to video upgrade");
+    VCRStickyNote(@"debugLastAction", @"upgrade audio -> video (held)");
+    vcrUpgradeFromAudio = YES;
+    VCRToggleVideoRecording();
+    if (!vcrCameraRecording) {
+        vcrUpgradeFromAudio = NO;
+        VCRDebugEvent(@"upgrade refused: camera did not start, audio keeps recording");
+    }
 }
 
 static NSMutableDictionary<NSValue *, NSValue *> *vcrGestureTouchPoints = nil;

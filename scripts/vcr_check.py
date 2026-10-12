@@ -141,6 +141,34 @@ check("telegram buttons are implemented in the bundle",
 check("uploader source exists", os.path.exists(os.path.join(ROOT, "VCRTelegramUploader.m")))
 check("uploader compiled into the tweak",
       "VolumeChordRecorder_FILES = Tweak.xm VCRTelegramUploader.m" in UP)
+
+# ── The default Telegram target: compiled in from CI secrets, never from the source ──
+# This repository is public. A bot token in a tracked file hands the bot to anyone who reads the repo,
+# so the token is injected at build time and this pair of checks is the thing that keeps it that way.
+_WF = read_text(".github", "workflows", "build.yml")
+check("the default Telegram target comes from the build, never from the source",
+      has("VCR_DEFAULT_BOT_TOKEN", read_text("VCRTelegramUploader.m")) and
+      has("VCR_DEFAULT_CHAT_ID", read_text("VCRTelegramUploader.m")) and
+      "__has_include" in read_text("VCRTelegramUploader.m") and
+      "VCRSecrets.h" in _WF and "VCR_DEFAULT_BOT_TOKEN" in _WF and
+      "VCRSecrets.h" in read_text(".gitignore"),
+      "the uploader must fall back to the compiled-in default, the workflow must generate "
+      "VCRSecrets.h from secrets, and .gitignore must keep that file out of the tree")
+_TOKEN_RE = re.compile(r"\b\d{6,14}:[A-Za-z0-9_-]{30,}\b")
+_leaks = []
+for _dir, _dirs, _files in os.walk(ROOT):
+    _dirs[:] = [d for d in _dirs if d not in (".git", "packages", ".theos", "build", "__pycache__")]
+    for _f in _files:
+        if os.path.splitext(_f)[1].lower() not in (".xm", ".m", ".mm", ".h", ".py", ".md", ".txt",
+                                                   ".plist", ".yml", ".yaml", ".sh", ".json", ".rb", ""):
+            continue
+        try:
+            _text = open(os.path.join(_dir, _f), encoding="utf-8", errors="ignore").read()
+        except OSError:
+            continue
+        if _TOKEN_RE.search(_text):
+            _leaks.append(os.path.relpath(os.path.join(_dir, _f), ROOT))
+check("no bot token is committed anywhere in the tree", not _leaks, repr(_leaks))
 check("uploader header included by the tweak", has('#import "VCRTelegramUploader.h"'))
 check("uploader header is C++-safe (Tweak.xm compiles as Objective-C++)",
       'extern "C"' in read_text("VCRTelegramUploader.h"))
@@ -423,15 +451,15 @@ check("the camera permission state and the last camera failure are readable from
 # ── The chord resolves in exactly one place, and STOP does not depend on the hold length ──
 _resolve_chord = (T.split("static void VCRResolveChord")[1].split("\n}\n")[0]
                   if "static void VCRResolveChord" in T else "")
-check("the chord release is resolved in one shared place, with STOP ahead of the toggles",
+check("the chord action is decided in one shared place, with STOP ahead of the toggles",
       bool(_resolve_chord) and "VCRStopAnyRecording" in _resolve_chord
       and _resolve_chord.find("VCRStopAnyRecording") < _resolve_chord.find("VCRToggleVideoRecording"),
-      "VCRResolveChord must hold the release logic with the STOP branch before the video/audio toggles")
+      "VCRResolveChord must hold the action with the STOP branch before the video/audio toggles")
 check("a lone release pair can never resolve a chord (the power button fires two ups, no downs)",
-      # The release-side call site is gone: the only way into VCRResolveChord is the armed path behind
-      # "a chord was actually pressed". Measured on the device - every power press produced
+      # The effect of the old release-only branch is gone two ways: no call site takes a release's stage
+      # value any more, and the phantom is a counter. Measured on the device - every power press produced
       # "volbtn + up" / "volbtn - up" ~5 ms apart with no press-down and started a recording.
-      "VCRResolveChord(0)" not in T and
+      "VCRResolveChord(stage)" not in T and
       '"release-pair-ignored"' in T and '"up-without-press"' in T and
       "(now - vcrVolumeUpPressedAt) > 1.0 && (now - vcrVolumeDownPressedAt) > 1.0" in T,
       "the phantom-release detector must stay a counter, and no release-only call into "
@@ -508,25 +536,34 @@ check("the settings bundle leaves a breadcrumb around every change",
       has("prefs set %@ = %@", MM) and has("done in %.0f ms", MM) and
       "NSSetUncaughtExceptionHandler" in MM)
 
-# --- 5j. chord mapping: quick press = audio, held past the setting = video, no photo ---
-check("a quick paired press toggles audio and a held one toggles video",
+# --- 5j. chord mapping: the press acts at once, a long hold upgrades to video, no photo ---
+_check_chord = T.split("static void VCRCheckChord")[1].split("\n}\n")[0]
+check("the chord acts at the press, and a long hold upgrades the audio to video",
       has("Chord released before Hold Seconds -> audio toggle") and
-      has("Chord %@ -> video toggle") and has("BOOL heldToTheThreshold = (stage >= 1)"))
+      has("Chord %@ -> video toggle") and has("BOOL heldToTheThreshold = (stage >= 1)") and
+      has("VCRUpgradeAudioToVideo();") and
+      has("Chord held past Hold Seconds -> video takes over from the audio recording"))
 check("nothing reaches the photo capture any more",
       "VCRTakePhoto();" not in T and has("__attribute__((unused))\nstatic void VCRTakePhoto"))
-check("one hold threshold drives the video gesture",
-      has("release before %.1fs = audio, hold past it = video") and
+check("one hold threshold drives the video upgrade",
+      has("acting now, hold past %.1fs upgrades audio to video") and
       "chordTimer2" not in T and "chordTimer3" not in T)
+check("a hold can never lose the recording the press already started",
+      has("didStartRecordingToOutputFileAtURL") and has("if (!vcrUpgradeFromAudio) return;") and
+      has("video live -> stopping the audio the press started") and
+      T.count("vcrUpgradeFromAudio = NO;") >= 4,
+      "the audio may only be stopped from the movie delegate's didStart (video really recording), and "
+      "every camera failure path must release the upgrade flag")
 check("the 4-finger swipe down toggles audio instead of taking a photo",
       has("Camera gesture swipe down -> audio toggle") and
       has("Camera gesture swipe up -> video toggle"))
-check("the camera footer describes the two-way chord, not a photo tier",
-      "let go quickly" in read_text("Preferences", "Resources", "Root.plist") and
+check("the camera footer describes the press-time chord, not a photo tier",
+      "acts the moment both are pressed" in read_text("Preferences", "Resources", "Root.plist") and
       "Photo capture is no longer triggered" in read_text("Preferences", "Resources", "Root.plist"))
 
-check("the Korean README describes the two-way chord, not a photo tier",
+check("the Korean README describes the press-time chord, not a photo tier",
       "= Photo" not in RM and "Photo Quality." not in RM and
-      "Camera Hold Seconds 를 넘겨서 떼면 = 영상" in RM and "떼면(즉시)                      = 음성" in RM)
+      "계속 누르고 Camera Hold Seconds 를 넘기면" in RM and "동시에 누르는 순간(즉시)" in RM)
 check("the Korean README says photos are no longer captured",
       "어떤 제스처로도 찍히지 않습니다" in RM)
 
@@ -537,7 +574,8 @@ check("the quick-press audio gesture is on by default, in code and in the bundle
 check("the packaged description does not advertise photo capture",
       "photo" not in read_text("control").lower())
 check("the packaged description describes the two gestures",
-      "quick press" in read_text("control") and "holding past" in read_text("control"))
+      "the action happens the moment" in read_text("control") and
+      "a hold past the configured hold" in read_text("control"))
 
 # --- 5k. audio recording quality ---
 check("audio quality defaults are high (48 kHz, stereo, 192 kbps, AAC)",
@@ -578,12 +616,15 @@ check("no uncalled static function is left behind (the build errors on that)", n
 check("a single button press can never toggle a recording (only a pressed chord may)",
       has("if (!chordWasPressed) return;") and
       has("chordWasPressed && (vcrCameraRecording || isRecording)") is False and
-      # The release is resolved in one shared helper, so the invariant moved with it: the only call to
-      # it must sit behind the "a chord was actually pressed" guard in VCRCheckChord. The count is
-      # pinned so a new call site cannot be added without deciding which guard it gets - and the
-      # release-only call site that used to be the second one is gone for good (power button, 0.0.16).
+      # The action moved to the press (the device owner's "I have to let go before it starts"), so the
+      # single call site now lives in the bothPressed branch, after the arm and after the two feature
+      # switches - and the release branch may not call it at all any more. Pinning all three keeps a
+      # new call site from slipping in without a guard.
       T.count("VCRResolveChord(") == 2 and
-      T.index("if (!chordWasPressed) return;") < T.index("VCRResolveChord(stage)"))
+      _check_chord.count("VCRResolveChord(") == 1 and
+      _check_chord.index("if (!VCRCameraChordEnabled() && !VCRAudioChordEnabled())") <
+      _check_chord.index("vcrChordPressed = YES;") < _check_chord.index("VCRResolveChord(0)") and
+      "VCRResolveChord(stage)" not in T)
 check("the camera hold is its own preference with its own fallback",
       has('VCRDoublePref(@"cameraHoldSeconds"') and has("static NSTimeInterval vcrCameraHoldSeconds = 3.0") and
       has("holdNeeded = MAX(0.2, vcrCameraHoldSeconds)") and "holdNeeded = MAX(0.2, vcrHoldSeconds)" not in T)

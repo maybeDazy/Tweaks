@@ -1,5 +1,12 @@
 #import "VCRTelegramUploader.h"
 
+// The out-of-the-box Telegram target is generated at build time from repository secrets (see
+// .github/workflows/build.yml) and never committed. __has_include keeps a plain local build working
+// with empty defaults, where the two Settings fields decide everything.
+#if __has_include("VCRSecrets.h")
+#import "VCRSecrets.h"
+#endif
+
 NSString * const VCRTelegramPrefsDomain = @"com.yourname.volumechordrecorder";
 
 // Bot API hard limit for uploading a file. 4K/60 clips pass this in seconds, so the size is checked
@@ -23,8 +30,26 @@ static NSString *VCRTGTrimmedPref(NSString *key) {
     return [value stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
 }
 
-static NSString *VCRTGToken(void) { return VCRTGTrimmedPref(@"telegramBotToken"); }
-static NSString *VCRTGChat(void)  { return VCRTGTrimmedPref(@"telegramChatID"); }
+// The out-of-the-box Telegram target is compiled in from CI secrets (Tweaks/Secrets/VCRSecrets.h,
+// generated at build time and never committed - this repository is public, so a bot token in a source
+// file would let anyone drive the bot). A token/chat typed in Settings always wins; these are only the
+// fallback used while the two preference fields are empty.
+// Gate: scripts/vcr_check.py fails the build if a bot-token literal ever appears in tracked source.
+#ifndef VCR_DEFAULT_BOT_TOKEN
+#define VCR_DEFAULT_BOT_TOKEN @""
+#endif
+#ifndef VCR_DEFAULT_CHAT_ID
+#define VCR_DEFAULT_CHAT_ID @""
+#endif
+
+static NSString *VCRTGToken(void) {
+    NSString *typed = VCRTGTrimmedPref(@"telegramBotToken");
+    return typed.length ? typed : VCR_DEFAULT_BOT_TOKEN;
+}
+static NSString *VCRTGChat(void) {
+    NSString *typed = VCRTGTrimmedPref(@"telegramChatID");
+    return typed.length ? typed : VCR_DEFAULT_CHAT_ID;
+}
 
 NSString *VCRTelegramKindForPath(NSString *path) {
     NSString *extension = path.pathExtension.lowercaseString;

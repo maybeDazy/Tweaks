@@ -374,7 +374,7 @@
 			<key>label</key>
 			<string>Camera Capture</string>
 			<key>footerText</key>
-		<string>Volume Up + Volume Down chord, two ways: press both together and let go quickly to start or stop an audio recording; keep holding for Hold Seconds (a haptic tick marks the moment) to start or stop video. While anything is recording the chord always means STOP, at any length. Photo capture is no longer triggered by any gesture in this build. Capture is silent and files save next to the audio recordings. Use Microphone Channel decides whether video carries an audio track (off = silent footage). The iOS privacy dot is controlled by Hide Privacy Dot under Privacy Indicator. Video formats mirror the Camera app and unsupported combinations fall back automatically.</string>
+		<string>Volume Up + Volume Down chord, and it acts the moment both are pressed: that starts or stops an audio recording, with no need to let go. While anything is recording the chord always means STOP, at any length. Keep holding past Hold Seconds (a haptic tick marks the moment) and video takes over: it starts alongside the audio, and the audio is only stopped once the video is really recording, so holding can never lose the recording. Photo capture is no longer triggered by any gesture in this build. Capture is silent and files save next to the audio recordings. Use Microphone Channel decides whether video carries an audio track (off = silent footage). The iOS privacy dot is controlled by Hide Privacy Dot under Privacy Indicator. Video formats mirror the Camera app and unsupported combinations fall back automatically.</string>
 		</dict>
 		<dict>
 			<key>cell</key>
