@@ -582,9 +582,28 @@ check("the session's own runtime error or interruption is recorded",
       "and record what it says into debugVideoSession")
 
 # ── The capture lives in mediaserverd, because SpringBoard is not allowed to capture ──
-_FILTER = read_text("layout", "Library", "MobileSubstrate", "DynamicLibraries", "VolumeChordRecorder.plist")
+_FILTER_LAYOUT = read_text("layout", "Library", "MobileSubstrate", "DynamicLibraries", "VolumeChordRecorder.plist")
+
+
+def _filter_of(path):
+    """Theos packages the project-root VolumeChordRecorder.plist while the layout copy sits in the same
+    package, so both have to parse to the same filter or one of them silently wins."""
+    try:
+        return plistlib.load(open(path, "rb")).get("Filter")
+    except Exception:
+        return None
+
+
+_root_filter = _filter_of(os.path.join(ROOT, "VolumeChordRecorder.plist"))
+_layout_filter = _filter_of(os.path.join(ROOT, "layout", "Library", "MobileSubstrate", "DynamicLibraries", "VolumeChordRecorder.plist"))
+check("the packaged filter lists mediaserverd and both copies agree",
+      _root_filter == _layout_filter and
+      "mediaserverd" in (_root_filter or {}).get("Executables", []) and
+      "com.apple.springboard" in (_root_filter or {}).get("Bundles", []),
+      "the root VolumeChordRecorder.plist is the one Theos packages (0.0.23 shipped a Bundles-only filter "
+      "while the layout copy had the Executables entry), and the two copies must not diverge")
 check("the tweak is injected into mediaserverd as well as SpringBoard",
-      "mediaserverd" in _FILTER and "com.apple.springboard" in _FILTER and "Executables" in _FILTER,
+      "mediaserverd" in _FILTER_LAYOUT and "com.apple.springboard" in _FILTER_LAYOUT and "Executables" in _FILTER_LAYOUT,
       "the capture cannot run in SpringBoard (interrupted reason=1, and none of its 387 entitlement "
       "keys is a camera capture key): the filter must list mediaserverd, the way SneakyCam and vcam-ios do")
 check("SpringBoard only forwards video to the daemon, which owns the capture",
