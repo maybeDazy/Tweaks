@@ -42,6 +42,7 @@ static NSInteger vcrHapticStrength = 1;   // 0 light / 1 medium / 2 strong
 static BOOL volumeUpPressed = NO;
 static BOOL volumeDownPressed = NO;
 static BOOL vcrChordPressed = NO;   // both buttons went down, even for a tap shorter than a tier
+static BOOL vcrChordActed = NO;     // this gesture already acted; a held button's repeats must not act again
 // SneakyCam style pairing (its SparkRecorder keeps increaseLastPressed/decreaseLastPressed and decides
 // the chord from the gap between them): the two buttons do NOT have to be held at the same instant.
 // Hand presses on this device last 80-130 ms, so overlap-only arming fired by luck.
@@ -146,6 +147,40 @@ static BOOL VCRDaemonVideoRecording(void) {
 
 static void VCRNotifyDaemon(NSString *name) {
     notify_post(name.UTF8String);
+}
+
+// mediaserverd is not the mobile user, so its CFPreferences writes may land in another uid's domain and
+// the ready marker / log below are what can always be read back. They live in the captures folder, which
+// is proved writable for this tweak and is inside the media daemon's own territory.
+static NSString *VCRDaemonDirectory(void) {
+    return @"/var/mobile/Media/VolumeChordRecorder";
+}
+
+static NSString *VCRDaemonMarkerPath(void) {
+    return [VCRDaemonDirectory() stringByAppendingPathComponent:@"daemon-ready"];
+}
+
+static BOOL VCRDaemonVideoReady(void) {
+    return [[NSFileManager defaultManager] fileExistsAtPath:VCRDaemonMarkerPath()];
+}
+
+static void VCRDaemonNote(NSString *line) {
+    @try {
+        [[NSFileManager defaultManager] createDirectoryAtPath:VCRDaemonDirectory()
+                                 withIntermediateDirectories:YES attributes:nil error:nil];
+        NSString *path = [VCRDaemonDirectory() stringByAppendingPathComponent:@"daemon.log"];
+        NSString *entry = [NSString stringWithFormat:@"%@ %@\n", [[NSDate date] description], line];
+        if ([[NSFileManager defaultManager] fileExistsAtPath:path]) {
+            NSFileHandle *handle = [NSFileHandle fileHandleForWritingAtPath:path];
+            [handle seekToEndOfFile];
+            [handle writeData:[entry dataUsingEncoding:NSUTF8StringEncoding]];
+            [handle closeFile];
+        } else {
+            [entry writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
+        }
+    } @catch (NSException *exception) {
+        VCRDebugEvent([NSString stringWithFormat:@"daemon note failed: %@", exception.reason]);
+    }
 }
 static dispatch_queue_t vcrCaptureQueue = nil;
 static NSTimer *vcrMaxVideoTimer = nil;
@@ -1228,10 +1263,12 @@ static void VCRStartVideoRecording(void) {
     if (!vcrEnabled || !vcrCameraEnabled) return;
     if (vcrCameraRecording) return;
 
-    // SpringBoard cannot capture, so the request is handed to mediaserverd; the daemon side skips this
-    // branch because vcrRunningInMediaServer is set there. The recording state is published in a
-    // preference so the chord in SpringBoard still knows a recording is running.
-    if (!vcrRunningInMediaServer) {
+    // SpringBoard cannot capture, so the request is handed to mediaserverd - but only when the daemon
+    // really has this dylib. Its ready marker is a file, not a preference, because mediaserverd is a
+    // different user and its CFPreferences writes may not be the ones we read back. Without the marker
+    // the local attempt still runs, so the gesture keeps its "Camera busy" feedback instead of doing
+    // nothing at all.
+    if (!vcrRunningInMediaServer && VCRDaemonVideoReady()) {
         VCRLog(@"Video start forwarded to mediaserverd");
         VCRStickyNote(@"debugLastAction", @"video start -> mediaserverd");
         VCRDebugEvent(@"video start forwarded to mediaserverd");
@@ -1258,7 +1295,7 @@ static void VCRStartVideoRecording(void) {
 
     vcrMovieDelegate = [VCRMovieRecordingDelegate new];
     vcrCameraRecording = YES;
-    VCRSetDaemonVideoRecording(YES);   // SpringBoard reads this to know the chord must stop, not start
+    if (vcrRunningInMediaServer) VCRSetDaemonVideoRecording(YES);   // SpringBoard reads this to know to stop
     VCRWatchVideoStart();   // the flag is set before the asynchronous start, so it is watched
     dispatch_async(vcrCaptureQueue, ^{
         @try {
@@ -1319,11 +1356,15 @@ static void VCRStartVideoRecording(void) {
 static void VCRStopVideoRecording(void) {
     if (!vcrRunningInMediaServer) {
         if (!vcrCameraRecording && !VCRDaemonVideoRecording()) return;
-        VCRLog(@"Video stop forwarded to mediaserverd");
-        VCRStickyNote(@"debugLastAction", @"video stop -> mediaserverd");
-        VCRDebugEvent(@"video stop forwarded to mediaserverd");
-        VCRNotifyDaemon(VCRDaemonVideoStopNotification);
-        return;   // the daemon clears the state flag when its recording really ends
+        if (!VCRDaemonVideoReady()) {   // no daemon to forward to: fall through to the local stop path
+            if (!vcrCameraRecording) return;
+        } else {
+            VCRLog(@"Video stop forwarded to mediaserverd");
+            VCRStickyNote(@"debugLastAction", @"video stop -> mediaserverd");
+            VCRDebugEvent(@"video stop forwarded to mediaserverd");
+            VCRNotifyDaemon(VCRDaemonVideoStopNotification);
+            return;   // the daemon clears the state flag when its recording really ends
+        }
     }
     AVCaptureMovieFileOutput *output = vcrMovieOutput;
     if (!output || (!vcrCameraRecording && !output.isRecording)) return;
@@ -1353,18 +1394,22 @@ static void VCRDaemonRecordVideo(BOOL start) {
         if (start) {
             if (vcrCameraRecording) return;
             VCRDebugEvent(@"daemon: video start requested by the chord");
+            VCRDaemonNote(@"video start requested");
             VCRStartVideoRecording();
         } else {
             VCRDebugEvent(@"daemon: video stop requested by the chord");
+            VCRDaemonNote(@"video stop requested");
             VCRStopVideoRecording();
         }
         VCRSetDaemonVideoRecording(vcrCameraRecording);
         VCRStickyNote(@"debugDaemonVideoState", [NSString stringWithFormat:@"recording=%d %@",
                                                  vcrCameraRecording, VCRVideoAttemptState()]);
+        VCRDaemonNote([NSString stringWithFormat:@"recording=%d %@", vcrCameraRecording, VCRVideoAttemptState()]);
     } @catch (NSException *exception) {
         vcrCameraRecording = NO;
         VCRSetDaemonVideoRecording(NO);
         VCRDebugEvent([NSString stringWithFormat:@"daemon video exception: %@", exception.reason]);
+        VCRDaemonNote([NSString stringWithFormat:@"exception: %@", exception.reason]);
     }
 }
 
@@ -1379,6 +1424,7 @@ static void VCRResetChordState(void) {
     VCRCancelHoldTimer();
     vcrChordStage = 0;
     vcrChordPressed = NO;
+    vcrChordActed = NO;
 }
 
 static void VCRStopAnyRecording(void) {
@@ -1492,7 +1538,13 @@ static void VCRCheckChord(void) {
 
     if (!VCRCameraChordEnabled() && !VCRAudioChordEnabled()) { VCRResetChordState(); return; }
     vcrChordPressed = YES;
-    if (holdTimer) return; // already counting, and the press action already ran
+    // Act exactly once per gesture. Holding the buttons repeats the press-down selector (measured: a
+    // repeat roughly every 48 ms), and every repeat re-enters here - and because the hold timer sets
+    // itself back to nil when it fires, the old "already counting" guard stopped protecting anything
+    // after the first second: the recording then started and stopped over and over for as long as the
+    // buttons stayed down, uploading every fragment.
+    if (vcrChordActed) return;
+    vcrChordActed = YES;
 
     NSTimeInterval holdNeeded = MAX(0.2, vcrCameraHoldSeconds);
     VCRStickyNote(@"debugLastChordArmed", [NSString stringWithFormat:@"armed hold=%.1fs cam=%d aud=%d up=%d down=%d",
@@ -2180,6 +2232,9 @@ static void VCRSchedulePrefsReload(void) {
             VCRLoadPrefs();
             VCRSetDaemonVideoRecording(NO);
             CFPreferencesAppSynchronize(vcrDomain);
+            VCRDaemonNote(@"mediaserverd side loaded");
+            [[NSString stringWithFormat:@"%@\n", [[NSDate date] description]]
+                writeToFile:VCRDaemonMarkerPath() atomically:YES encoding:NSUTF8StringEncoding error:nil];
             static dispatch_queue_t vcrDaemonQueue = nil;
             if (!vcrDaemonQueue) vcrDaemonQueue = dispatch_queue_create("com.yourname.volumechordrecorder.daemon", DISPATCH_QUEUE_SERIAL);
             static int vcrDaemonStartToken = 0;

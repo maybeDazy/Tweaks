@@ -632,6 +632,22 @@ check("the recording state crosses the process boundary through a preference",
 check("every daemon entry point is exception-wrapped",
       has("static void VCRDaemonRecordVideo(BOOL start) {\n    @try {"),
       "an unhandled exception in mediaserverd takes the media stack down with it")
+check("the chord acts exactly once per gesture (a held button's repeats cannot re-toggle)",
+      has("static BOOL vcrChordActed = NO;") and has("if (vcrChordActed) return;") and
+      has("vcrChordActed = YES;") and has("vcrChordActed = NO;"),
+      "holding the buttons repeats the press-down selector (about every 48 ms on this device) and the "
+      "hold timer nils itself when it fires, so without the once-per-gesture flag the action ran again "
+      "on every repeat: recording started and stopped over and over while the keys were held")
+check("video is only forwarded when the daemon's file marker proves it loaded",
+      has("static BOOL VCRDaemonVideoReady(void)") and has("VCRDaemonMarkerPath()") and
+      "if (!vcrRunningInMediaServer && VCRDaemonVideoReady()) {" in T,
+      "mediaserverd is a different user, so a preference is not a reliable readiness signal - and "
+      "forwarding into nothing loses the gesture's only feedback (the local attempt says 'Camera busy')")
+check("the daemon records its evidence in the captures folder",
+      has("static void VCRDaemonNote(NSString *line)") and has('VCRDaemonNote(@"mediaserverd side loaded")') and
+      has('stringByAppendingPathComponent:@"daemon-ready"'),
+      "the daemon's own file log and marker are the one channel that does not depend on which uid it "
+      "runs as")
 check("the 4-finger swipe down toggles audio instead of taking a photo",
       has("Camera gesture swipe down -> audio toggle") and
       has("Camera gesture swipe up -> video toggle"))
