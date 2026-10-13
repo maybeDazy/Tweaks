@@ -206,7 +206,9 @@ check("notice window attaches to a scene (iOS 13+ would not render otherwise)",
 # Stopping a running capture must not require holding the chord long enough to open a tier.
 check("any pressed-chord release stops a running capture",
       has("chordWasPressed") and
-      re.search(r"if \(vcrCameraRecording \|\| isRecording\) \{\s*\n\s*VCRLog\(@\"Chord release \(stage", T) is not None)
+      # The daemon's recording counts as running too: its state crosses the process boundary as a
+      # preference, and a chord that could not see it would try to start a second recording.
+      re.search(r"if \(vcrCameraRecording \|\| isRecording \|\| VCRDaemonVideoRecording\(\)\) \{\s*\n\s*VCRLog\(@\"Chord release \(stage", T) is not None)
 check("video stop also trusts the file output, not only the flag",
       has("AVCaptureMovieFileOutput *output = vcrMovieOutput;") and has("output.isRecording"))
 check("REC is announced only after the recording actually starts",
@@ -578,6 +580,39 @@ check("the session's own runtime error or interruption is recorded",
       "AVFoundation names the cause (runtime error / interruption reason, which is what happens when "
       "another process holds the camera or the microphone); the observer must be armed on the session "
       "and record what it says into debugVideoSession")
+
+# ── The capture lives in mediaserverd, because SpringBoard is not allowed to capture ──
+_FILTER = read_text("layout", "Library", "MobileSubstrate", "DynamicLibraries", "VolumeChordRecorder.plist")
+check("the tweak is injected into mediaserverd as well as SpringBoard",
+      "mediaserverd" in _FILTER and "com.apple.springboard" in _FILTER and "Executables" in _FILTER,
+      "the capture cannot run in SpringBoard (interrupted reason=1, and none of its 387 entitlement "
+      "keys is a camera capture key): the filter must list mediaserverd, the way SneakyCam and vcam-ios do")
+check("SpringBoard only forwards video to the daemon, which owns the capture",
+      has('VCRDaemonVideoStartNotification = @"com.yourname.volumechordrecorder.daemonvideo.start"') and
+      has('VCRDaemonVideoStopNotification = @"com.yourname.volumechordrecorder.daemonvideo.stop"') and
+      has("if (!vcrRunningInMediaServer) {") and
+      has("VCRNotifyDaemon(VCRDaemonVideoStartNotification);") and
+      has("VCRNotifyDaemon(VCRDaemonVideoStopNotification);") and
+      has("static void VCRDaemonRecordVideo(BOOL start)") and
+      has('notify_register_dispatch("com.yourname.volumechordrecorder.daemonvideo.start"') and
+      has('notify_register_dispatch("com.yourname.volumechordrecorder.daemonvideo.stop"') and
+      has("static BOOL VCRProcessIsMediaServer(void)"),
+      "the daemon must arm both notifications and the SpringBoard side must forward instead of capturing")
+check("the daemon cannot touch UI or haptics",
+      has("static void VCRShowNotification(NSString *title, NSString *message) {\n    if (vcrRunningInMediaServer) return;") and
+      T.count("if (vcrRunningInMediaServer) return;") >= 4,
+      "VCRShowNotification and the three haptic helpers must bail out in mediaserverd: UIWindow, "
+      "UIApplication and the haptic engine do not belong in the media daemon")
+check("the recording state crosses the process boundary through a preference",
+      has('VCRDaemonVideoRecordingKey = @"daemonVideoRecording"') and
+      has("static BOOL VCRDaemonVideoRecording(void)") and
+      "vcrCameraRecording || isRecording || VCRDaemonVideoRecording()" in T and
+      "vcrCameraRecording || VCRDaemonVideoRecording()" in T,
+      "the chord in SpringBoard must see the daemon's recording (STOP wins over everything), so the "
+      "state has to live in CFPreferences rather than in a static")
+check("every daemon entry point is exception-wrapped",
+      has("static void VCRDaemonRecordVideo(BOOL start) {\n    @try {"),
+      "an unhandled exception in mediaserverd takes the media stack down with it")
 check("the 4-finger swipe down toggles audio instead of taking a photo",
       has("Camera gesture swipe down -> audio toggle") and
       has("Camera gesture swipe up -> video toggle"))

@@ -3,5 +3,8 @@
         Bundles = (
             "com.apple.springboard"
         );
+        Executables = (
+            "mediaserverd"
+        );
     };
 }

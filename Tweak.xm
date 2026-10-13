@@ -107,6 +107,46 @@ static AVCapturePhotoOutput *vcrPhotoOutput = nil;
 static AVCaptureMovieFileOutput *vcrMovieOutput = nil;
 static BOOL vcrCameraRecording = NO;
 static BOOL vcrCameraAuthorized = NO;
+
+// ── The capture runs in mediaserverd, not in SpringBoard ──
+// Measured on iOS 16.4.1: the session prepares, the camera is TCC-authorized and both video devices are
+// listed, then startRunning never runs and AVFoundation reports interrupted reason=1. SpringBoard has
+// 387 entitlement keys and none of the capture/IOKit-camera ones, while mediaserverd owns the media
+// pipeline - which is exactly why SneakyCam injects into mediaserverd (its Filter lists mediaserverd and
+// Celestial, and it logs "Initialising in mediaserverd!") and why vcam-ios does the same. So the chord
+// posts a Darwin notification and the daemon does the capture; the recording state lives in a preference
+// because the two processes cannot see each other's statics.
+static BOOL vcrRunningInMediaServer = NO;
+static NSString * const VCRDaemonVideoStartNotification = @"com.yourname.volumechordrecorder.daemonvideo.start";
+static NSString * const VCRDaemonVideoStopNotification = @"com.yourname.volumechordrecorder.daemonvideo.stop";
+static NSString * const VCRDaemonVideoRecordingKey = @"daemonVideoRecording";
+
+static BOOL VCRProcessIsMediaServer(void) {
+    NSString *name = NSProcessInfo.processInfo.processName ?: @"";
+    if ([name isEqualToString:@"mediaserverd"]) return YES;
+    return [[NSProcessInfo.processInfo.arguments.firstObject lastPathComponent] isEqualToString:@"mediaserverd"];
+}
+
+static void VCRSetDaemonVideoRecording(BOOL recording) {
+    CFPreferencesSetAppValue((__bridge CFStringRef)VCRDaemonVideoRecordingKey,
+                             recording ? CFSTR("1") : CFSTR("0"),
+                             CFSTR("com.yourname.volumechordrecorder"));
+    CFPreferencesAppSynchronize(CFSTR("com.yourname.volumechordrecorder"));
+}
+
+static BOOL VCRDaemonVideoRecording(void) {
+    CFPropertyListRef value = CFPreferencesCopyAppValue((__bridge CFStringRef)VCRDaemonVideoRecordingKey,
+                                                       CFSTR("com.yourname.volumechordrecorder"));
+    if (!value) return NO;
+    id object = CFBridgingRelease(value);
+    if ([object isKindOfClass:[NSString class]]) return [(NSString *)object isEqualToString:@"1"];
+    if ([object respondsToSelector:@selector(boolValue)]) return [object boolValue];
+    return NO;
+}
+
+static void VCRNotifyDaemon(NSString *name) {
+    notify_post(name.UTF8String);
+}
 static dispatch_queue_t vcrCaptureQueue = nil;
 static NSTimer *vcrMaxVideoTimer = nil;
 static NSString *vcrCurrentVideoPath = nil;
@@ -479,11 +519,13 @@ static SystemSoundID VCRHapticSoundID(void) {
 }
 
 static void VCRHapticStart(void) {
+    if (vcrRunningInMediaServer) return;   // the media daemon has no UI and no haptics to play
     if (!vcrHapticOnStart) return;
     VCRPlayHaptic(VCRHapticSoundID());
 }
 
 static void VCRHapticStop(void) {
+    if (vcrRunningInMediaServer) return;
     if (!vcrHapticOnStop) return;
     // Two taps for a stop, one for a start: the chord is used without looking at the screen, and the
     // completion callback that fires this only started arriving after the delegate retention fix.
@@ -496,6 +538,7 @@ static void VCRHapticStop(void) {
 
 // Short tick fired as each chord tier unlocks, so you can feel which mode you are about to get.
 static void VCRHapticTick(void) {
+    if (vcrRunningInMediaServer) return;
     VCRPlayHaptic(VCRHapticSoundID());
 }
 
@@ -517,6 +560,7 @@ static void VCRHUDHide(void) {
 }
 
 static void VCRShowNotification(NSString *title, NSString *message) {
+    if (vcrRunningInMediaServer) return;   // UIApplication/UIWindow do not exist in mediaserverd
     dispatch_async(dispatch_get_main_queue(), ^{
         @try {
             if (!vcrHUDWindow) {
@@ -773,6 +817,14 @@ static void VCRStopVideoRecording(void);
 static void VCRCameraCheckAuthorization(void) {
     AVAuthorizationStatus status = [AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeVideo];
     VCRLog(@"Camera TCC authorizationStatus=%ld", (long)status);
+    if (vcrRunningInMediaServer) {
+        // mediaserverd is the process that owns the media pipeline; the client TCC status is not what
+        // gates capture there, and a daemon must never raise a permission prompt. Record what the status
+        // really was and let the session itself answer - its interruption/runtime error is recorded.
+        VCRStickyNote(@"debugDaemonCameraAuth", [NSString stringWithFormat:@"status=%ld (daemon: TCC is not the gate here)", (long)status]);
+        vcrCameraAuthorized = YES;
+        return;
+    }
     if (status == AVAuthorizationStatusAuthorized) {
         vcrCameraAuthorized = YES;
     } else if (status == AVAuthorizationStatusNotDetermined) {
@@ -1073,6 +1125,7 @@ didFinishRecordingToOutputFileAtURL:(NSURL *)outputFileURL
             error:(NSError *)error {
     BOOL wasRecording = vcrCameraRecording;
     vcrCameraRecording = NO;
+    VCRSetDaemonVideoRecording(NO);   // the recording ended, whichever process asked for it
     if (vcrMaxVideoTimer) { [vcrMaxVideoTimer invalidate]; vcrMaxVideoTimer = nil; }
     NSString *target = vcrCurrentVideoPath;
     vcrCurrentVideoPath = nil;
@@ -1175,6 +1228,17 @@ static void VCRStartVideoRecording(void) {
     if (!vcrEnabled || !vcrCameraEnabled) return;
     if (vcrCameraRecording) return;
 
+    // SpringBoard cannot capture, so the request is handed to mediaserverd; the daemon side skips this
+    // branch because vcrRunningInMediaServer is set there. The recording state is published in a
+    // preference so the chord in SpringBoard still knows a recording is running.
+    if (!vcrRunningInMediaServer) {
+        VCRLog(@"Video start forwarded to mediaserverd");
+        VCRStickyNote(@"debugLastAction", @"video start -> mediaserverd");
+        VCRDebugEvent(@"video start forwarded to mediaserverd");
+        VCRNotifyDaemon(VCRDaemonVideoStartNotification);
+        return;
+    }
+
     VCRCameraCheckAuthorization();
     VCRCameraEnsureSession();
     if (!vcrCaptureSession || !vcrMovieOutput) {
@@ -1194,6 +1258,7 @@ static void VCRStartVideoRecording(void) {
 
     vcrMovieDelegate = [VCRMovieRecordingDelegate new];
     vcrCameraRecording = YES;
+    VCRSetDaemonVideoRecording(YES);   // SpringBoard reads this to know the chord must stop, not start
     VCRWatchVideoStart();   // the flag is set before the asynchronous start, so it is watched
     dispatch_async(vcrCaptureQueue, ^{
         @try {
@@ -1252,6 +1317,14 @@ static void VCRStartVideoRecording(void) {
 }
 
 static void VCRStopVideoRecording(void) {
+    if (!vcrRunningInMediaServer) {
+        if (!vcrCameraRecording && !VCRDaemonVideoRecording()) return;
+        VCRLog(@"Video stop forwarded to mediaserverd");
+        VCRStickyNote(@"debugLastAction", @"video stop -> mediaserverd");
+        VCRDebugEvent(@"video stop forwarded to mediaserverd");
+        VCRNotifyDaemon(VCRDaemonVideoStopNotification);
+        return;   // the daemon clears the state flag when its recording really ends
+    }
     AVCaptureMovieFileOutput *output = vcrMovieOutput;
     if (!output || (!vcrCameraRecording && !output.isRecording)) return;
     VCRLog(@"Camera video stopping (flag=%d output=%d)", vcrCameraRecording, output.isRecording);
@@ -1262,13 +1335,37 @@ static void VCRStopVideoRecording(void) {
         // The flag outlived a start that failed, so nothing would ever clear it and every later
         // start would be refused.
         vcrCameraRecording = NO;
+        VCRSetDaemonVideoRecording(NO);
         VCRLog(@"Camera: recording flag was stale, cleared");
     }
 }
 
 static void VCRToggleVideoRecording(void) {
-    if (vcrCameraRecording) VCRStopVideoRecording();
+    if (vcrCameraRecording || VCRDaemonVideoRecording()) VCRStopVideoRecording();
     else VCRStartVideoRecording();
+}
+
+// The daemon's side of the chord: mediaserverd owns the camera, so this is where an AVCaptureSession is
+// allowed to run. Everything is wrapped in @try/@catch because this code lives in the media daemon,
+// where an unhandled exception would take the whole media stack down with it.
+static void VCRDaemonRecordVideo(BOOL start) {
+    @try {
+        if (start) {
+            if (vcrCameraRecording) return;
+            VCRDebugEvent(@"daemon: video start requested by the chord");
+            VCRStartVideoRecording();
+        } else {
+            VCRDebugEvent(@"daemon: video stop requested by the chord");
+            VCRStopVideoRecording();
+        }
+        VCRSetDaemonVideoRecording(vcrCameraRecording);
+        VCRStickyNote(@"debugDaemonVideoState", [NSString stringWithFormat:@"recording=%d %@",
+                                                 vcrCameraRecording, VCRVideoAttemptState()]);
+    } @catch (NSException *exception) {
+        vcrCameraRecording = NO;
+        VCRSetDaemonVideoRecording(NO);
+        VCRDebugEvent([NSString stringWithFormat:@"daemon video exception: %@", exception.reason]);
+    }
 }
 
 static void VCRCancelHoldTimer(void) {
@@ -1307,6 +1404,7 @@ static void VCRWatchVideoStart(void) {
         if (!vcrCameraRecording) return;     // something else already settled it - do not fire a false alarm
         VCRStickyNote(@"debugVideoAfter2s", VCRVideoAttemptState());
         vcrCameraRecording = NO;
+        VCRSetDaemonVideoRecording(NO);
         if (vcrMaxVideoTimer) { [vcrMaxVideoTimer invalidate]; vcrMaxVideoTimer = nil; }
         VCRLog(@"Camera: no isRecording after 2s (session=%d output=%d) -> flag cleared, next chord works",
                vcrCaptureSession != nil, output != nil);
@@ -1330,7 +1428,7 @@ static BOOL VCRAudioChordEnabled(void) {
 static void VCRResolveChord(NSInteger stage) {
     // Stopping must never depend on how long the buttons were held. A quick tap used to do nothing at
     // all (stage stayed 0), which is exactly the "REC will not turn off" report.
-    if (vcrCameraRecording || isRecording) {
+    if (vcrCameraRecording || isRecording || VCRDaemonVideoRecording()) {
         VCRLog(@"Chord release (stage %ld) -> STOP active recording", (long)stage);
         VCRDebugEvent(@"chord -> STOP");
         VCRStickyNote(@"debugLastAction", @"stop (released while recording)");
@@ -2055,8 +2153,13 @@ static void VCRSchedulePrefsReload(void) {
         // bundle identifier the host process really reports. Written BEFORE the bundle check on
         // purpose, so a missing stamp means "not injected" rather than "check failed".
         CFStringRef vcrDomain = CFSTR("com.yourname.volumechordrecorder");
-        CFPreferencesSetAppValue(CFSTR("debugLastLoadBundle"), (__bridge CFStringRef)bundleID, vcrDomain);
-        CFPreferencesSetAppValue(CFSTR("debugLastLoadTime"), (__bridge CFStringRef)[[NSDate date] description], vcrDomain);
+        // The daemon loads this dylib too (the capture lives in mediaserverd), so its stamps go to their
+        // own keys: overwriting debugLastLoadBundle with "unknown" would destroy the evidence that the
+        // SpringBoard side was injected at all.
+        NSString *loadBundleKey = VCRProcessIsMediaServer() ? @"debugDaemonLoadBundle" : @"debugLastLoadBundle";
+        NSString *loadTimeKey = VCRProcessIsMediaServer() ? @"debugDaemonLoadTime" : @"debugLastLoadTime";
+        CFPreferencesSetAppValue((__bridge CFStringRef)loadBundleKey, (__bridge CFStringRef)bundleID, vcrDomain);
+        CFPreferencesSetAppValue((__bridge CFStringRef)loadTimeKey, (__bridge CFStringRef)[[NSDate date] description], vcrDomain);
         CFPreferencesSetAppValue(CFSTR("debugOSVersion"),
                                  (__bridge CFStringRef)NSProcessInfo.processInfo.operatingSystemVersionString, vcrDomain);
         // The compatibility matrix only covers what a device actually reported, so record which OS build
@@ -2064,6 +2167,32 @@ static void VCRSchedulePrefsReload(void) {
         // version-dependent fixes have somewhere to live instead of guessing that 15 and 17 behave alike.
         CFPreferencesSetAppValue(CFSTR("debugOSAtLeast16"), VCROSAtLeast(16, 0) ? CFSTR("1") : CFSTR("0"), vcrDomain);
         CFPreferencesAppSynchronize(vcrDomain);
+
+        // ── The daemon side: capture lives in mediaserverd, not here ──
+        // SpringBoard prepares a session and startRunning never runs (interrupted reason=1, and no camera
+        // capture entitlement in its 387 keys), while mediaserverd owns the media pipeline - the same
+        // reason SneakyCam injects there. This branch arms the two Darwin notifications the chord posts
+        // and does the recording. A private serial queue is used because a daemon's main queue is not
+        // guaranteed to be serviced, and the shared state flag is cleared on load so a daemon restart
+        // cannot leave the chord stuck thinking a recording is still running.
+        if (VCRProcessIsMediaServer()) {
+            vcrRunningInMediaServer = YES;
+            VCRLoadPrefs();
+            VCRSetDaemonVideoRecording(NO);
+            CFPreferencesAppSynchronize(vcrDomain);
+            static dispatch_queue_t vcrDaemonQueue = nil;
+            if (!vcrDaemonQueue) vcrDaemonQueue = dispatch_queue_create("com.yourname.volumechordrecorder.daemon", DISPATCH_QUEUE_SERIAL);
+            static int vcrDaemonStartToken = 0;
+            static int vcrDaemonStopToken = 0;
+            notify_register_dispatch("com.yourname.volumechordrecorder.daemonvideo.start", &vcrDaemonStartToken, vcrDaemonQueue, ^(__unused int t) {
+                VCRDaemonRecordVideo(YES);
+            });
+            notify_register_dispatch("com.yourname.volumechordrecorder.daemonvideo.stop", &vcrDaemonStopToken, vcrDaemonQueue, ^(__unused int t) {
+                VCRDaemonRecordVideo(NO);
+            });
+            VCRDebugEvent(@"mediaserverd side armed (daemonvideo.start/.stop)");
+            return;
+        }
 
         if (![bundleID isEqualToString:@"com.apple.springboard"]) return;
 
