@@ -1581,6 +1581,16 @@ static void VCRUpgradeAudioToVideo(void) {
     if (!VCRCameraChordEnabled() || vcrCameraRecording) return;
     if (!VCRAudioChordEnabled()) return;   // the press started video directly; nothing to hand over
     if (!isRecording) return;
+    // Only hand the recording over when video can actually run. On this device it cannot: SpringBoard's
+    // session is refused (interrupted reason=1, no capture entitlement) and the jailbreak does not inject
+    // this dylib into mediaserverd, so forwarding would stop the audio and produce nothing. Keeping the
+    // audio is the honest outcome of a hold here, and it is recorded rather than silent.
+    if (!vcrRunningInMediaServer && !VCRDaemonVideoReady()) {
+        VCRLog(@"Chord held past Hold Seconds -> video is unavailable here, the audio recording stays");
+        VCRDebugEvent(@"held -> video unavailable (SpringBoard cannot capture, no daemon), audio kept");
+        VCRStickyNote(@"debugLastAction", @"held -> video unavailable, audio kept");
+        return;
+    }
     VCRLog(@"Chord held past Hold Seconds -> video takes over (audio stopped first, as before)");
     VCRDebugEvent(@"chord held -> audio stopped, video takes over");
     VCRStickyNote(@"debugLastAction", @"held -> video (audio stopped)");

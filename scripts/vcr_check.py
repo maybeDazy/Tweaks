@@ -551,7 +551,12 @@ check("one hold threshold drives the video upgrade",
       has("acting now, hold past %.1fs upgrades audio to video") and
       "chordTimer2" not in T and "chordTimer3" not in T)
 _upgrade = T.split("static void VCRUpgradeAudioToVideo(void) {")[1].split("\n}\n")[0]
-check("a hold hands the audio over to video instead of running both at once",
+check("a hold keeps the audio when video cannot run at all",
+      has("video is unavailable here, the audio recording stays") and
+      "if (!vcrRunningInMediaServer && !VCRDaemonVideoReady()) {" in T,
+      "handing the audio over to a video path that cannot run (SpringBoard refused, daemon not injected) "
+      "destroys the recording and produces nothing - the hold must leave the audio alone and say so")
+check("where video can run, a hold still hands the audio over instead of running both",
       "VCRStopRecording();" in _upgrade and "VCRToggleVideoRecording();" in _upgrade and
       _upgrade.index("VCRStopRecording();") < _upgrade.index("VCRToggleVideoRecording();") and
       "vcrUpgradeFromAudio" not in T,
