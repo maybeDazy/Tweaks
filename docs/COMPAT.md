@@ -141,6 +141,13 @@ also records every class on the device whose name looks like a privacy/sensor/mi
   counting" guard stopped protecting after the first second: on 0.0.23 a held chord toggled start/stop
   continuously (`armed` 113 -> 134 in minutes, five fragments uploaded in five seconds). `vcrChordActed`
   is set by the first action of a gesture and cleared with the chord state.
+- A single button can never arm the chord (0.0.26). The `SBVolumeControl` hooks for `-increaseVolume` /
+  `-decreaseVolume` are volume *change intents*, and they used to be fed into `VCRVolumeButtonEvent`:
+  their counters do not track presses at all (`decreaseVolumeIntent` 1247 against 352 real decrease
+  presses, `increaseVolumeIntent` 372 against 839 real increase presses), and because one of them could
+  satisfy "the other button went down inside the 450 ms pairing window", double-tapping a single volume
+  button started a recording. They are counters only now, so arming needs two real, distinct button
+  signals (the UIPress types or `SBVolumeHardwareButtonActions`).
 - A hold no longer destroys the audio when video cannot run: `VCRUpgradeAudioToVideo` hands the recording
   over only when the daemon marker proves a working video path exists, and otherwise leaves the audio
   recording in place and records "held -> video unavailable, audio kept" (0.0.25).

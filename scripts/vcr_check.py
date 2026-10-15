@@ -312,11 +312,16 @@ check("the SBVolumeControl group is registered behind an objc_getClass guard",
       has('if (objc_getClass("SBVolumeControl")) %init(VCRVolumeControlHooks);'))
 _iv = T[T.find("- (void)increaseVolume {"):][:200]
 _dv = T[T.find("- (void)decreaseVolume {"):][:200]
-check("SBVolumeControl hooks run the original before our handler",
+_hwd = T[T.find("- (void)volumeIncreasePressDownWithModifiers:"):][:260]
+check("the volume-intent hooks bump their counter, run the original, and feed no button events",
       order('VCRDebugBump(@"debugVolumeSelectors", @"increaseVolumeIntent");', "%orig;", _iv)
-      and order("%orig;", "VCRVolumeButtonEvent(YES, YES);", _iv)
       and order('VCRDebugBump(@"debugVolumeSelectors", @"decreaseVolumeIntent");', "%orig;", _dv)
-      and order("%orig;", "VCRVolumeButtonEvent(NO, YES);", _dv))
+      and "VCRVolumeButtonEvent" not in _iv and "VCRVolumeButtonEvent" not in _dv,
+      "an intent is not a button event: those two hooks must leave arming to the hardware selectors, or a "
+      "single button's fast double tap arms the chord")
+check("the hardware button hooks run the original before the chord sees the event",
+      order('VCRDebugBump(@"debugVolumeSelectors", @"increaseDown");', "%orig;", _hwd)
+      and order("%orig;", "VCRVolumeButtonEvent(YES, YES);", _hwd))
 
 # --- 5d. no hook may swallow the original implementation ---
 # A %hook body that never calls %orig replaces a system method with nothing. If a caller waits on
@@ -637,6 +642,16 @@ check("the recording state crosses the process boundary through a preference",
 check("every daemon entry point is exception-wrapped",
       has("static void VCRDaemonRecordVideo(BOOL start) {\n    @try {"),
       "an unhandled exception in mediaserverd takes the media stack down with it")
+check("a single button can never arm the chord, however fast it is tapped twice",
+      # The volume-intent hooks (SBVolumeControl -increaseVolume/-decreaseVolume) must stay counters: they
+      # are not button events, and feeding them in let one button's tap look like the other button's press
+      # inside the 450 ms pairing window.
+      T.count("VCRVolumeButtonEvent(YES, YES);") == 1 and
+      T.count("VCRVolumeButtonEvent(NO, YES);") == 1 and
+      "VCRDebugBump(@\"debugVolumeSelectors\", @\"increaseVolumeIntent\")" in T and
+      "VCRDebugBump(@\"debugVolumeSelectors\", @\"decreaseVolumeIntent\")" in T,
+      "the only VCRVolumeButtonEvent call sites may be the four hardware-button selectors; the intent "
+      "hooks must record themselves and nothing else")
 check("the chord acts exactly once per gesture (a held button's repeats cannot re-toggle)",
       has("static BOOL vcrChordActed = NO;") and has("if (vcrChordActed) return;") and
       has("vcrChordActed = YES;") and has("vcrChordActed = NO;"),

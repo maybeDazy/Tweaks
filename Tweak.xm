@@ -2007,16 +2007,19 @@ static void VCRVolumeButtonEvent(BOOL isIncrease, BOOL isDown) {
 %group VCRVolumeControlHooks
 %hook SBVolumeControl
 
+// These are volume *change intents*, not button events, and the counters prove they do not correspond to
+// presses: decreaseVolumeIntent runs far ahead of the real decrease presses (1247 against 352 measured)
+// while increaseVolumeIntent lags them (372 against 839). They used to be fed into VCRVolumeButtonEvent,
+// which meant a volume-up tap could satisfy "the OTHER button went down within the pairing window" and a
+// single button double-tapped inside 450 ms armed the chord and started a recording. Counted only.
 - (void)increaseVolume {
     VCRDebugBump(@"debugVolumeSelectors", @"increaseVolumeIntent");
     %orig;
-    VCRVolumeButtonEvent(YES, YES);
 }
 
 - (void)decreaseVolume {
     VCRDebugBump(@"debugVolumeSelectors", @"decreaseVolumeIntent");
     %orig;
-    VCRVolumeButtonEvent(NO, YES);
 }
 
 %end
