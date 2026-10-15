@@ -663,7 +663,7 @@
 			<key>label</key>
 			<string>Telegram Upload</string>
 			<key>footerText</key>
-			<string>Bot API uploads are capped at 50 MB, so 4K/60 clips are skipped and noted in the debug log. The token is stored in this preferences file in plain text. The buttons run the uploader inside SpringBoard and report into "Show Debug Log": Send All walks every recording in the folder, one Telegram message per file, about a second apart.</string>
+			<string>Bot API uploads are capped at 50 MB, so 4K/60 clips are skipped and noted in the debug log. The token is stored in this preferences file in plain text. The buttons run the uploader inside SpringBoard and report into "Show Debug Log". Send All walks the recordings that have not gone out yet, one Telegram message per file, about a second apart, and remembers what the API accepted in a hidden ".telegram-sent.txt" next to the recordings; turn "Skip Already Sent" off to send the whole folder again. "Send Latest Recording" always sends the newest file, delivered or not.</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -746,6 +746,20 @@
 			<string>telegramSendPhoto</string>
 			<key>default</key>
 			<false/>
+			<key>defaults</key>
+			<string>com.yourname.volumechordrecorder</string>
+			<key>PostNotification</key>
+			<string>com.yourname.volumechordrecorder.prefschanged</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>label</key>
+			<string>Skip Already Sent</string>
+			<key>key</key>
+			<string>telegramSkipSent</string>
+			<key>default</key>
+			<true/>
 			<key>defaults</key>
 			<string>com.yourname.volumechordrecorder</string>
 			<key>PostNotification</key>

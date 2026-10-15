@@ -18,12 +18,21 @@ void VCRTelegramSetLogger(VCRTelegramLogBlock log);
 BOOL VCRTelegramIsEnabled(void);
 BOOL VCRTelegramWantsKind(NSString *kind);
 
+// Settings switch (default ON): "Send All Recordings" skips files that already went out, so a folder that
+// was uploaded once is not uploaded again on every tap.
+BOOL VCRTelegramSkipsSent(void);
+
 // "audio" | "video" | "photo" | anything else -> "document".
 NSString *VCRTelegramKindForPath(NSString *path);
 
 // Schedules the upload and returns YES when a request was started. Completion is reported through
 // the logger; a file over the 50 MB bot-API limit is skipped and logged.
 BOOL VCRTelegramSendFile(NSURL *fileURL, NSString *kind, VCRTelegramLogBlock log);
+
+// Same, plus the HTTP outcome: `completion(YES)` only when the API accepted the file. A caller that
+// records what it already sent needs the outcome, and reading it out of the log text would be guessing.
+BOOL VCRTelegramSendFileCompleted(NSURL *fileURL, NSString *kind, VCRTelegramLogBlock log,
+                                  void (^completion)(BOOL delivered));
 
 void VCRTelegramSendText(NSString *text, VCRTelegramLogBlock log);
 

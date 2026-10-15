@@ -723,6 +723,57 @@ static NSURL *VCRNewestRecordingURL(void) {
     return newest;
 }
 
+// What already went to Telegram. The list lives in the captures folder as a hidden text file (SpringBoard
+// can write there - the daemon markers prove it) rather than in the preference domain, which Settings
+// shares and which should not grow a line per recording.
+static const NSUInteger VCRTelegramSentIndexMax = 2000;
+
+static NSString *VCRTelegramSentIndexPath(void) {
+    return [VCRRecordingDirectory() stringByAppendingPathComponent:@".telegram-sent.txt"];
+}
+
+static NSSet<NSString *> *VCRTelegramSentNames(void) {
+    NSString *text = [NSString stringWithContentsOfFile:VCRTelegramSentIndexPath()
+                                              encoding:NSUTF8StringEncoding error:nil];
+    if (text.length == 0) return [NSSet set];
+    NSMutableSet<NSString *> *names = [NSMutableSet set];
+    for (NSString *line in [text componentsSeparatedByString:@"\n"]) {
+        NSString *name = [line stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        if (name.length > 0) [names addObject:name];
+    }
+    return names;
+}
+
+// Records one delivered file. Entries whose file is gone are dropped and the list is bounded, so the index
+// follows the folder instead of growing forever.
+static void VCRTelegramRememberSent(NSURL *fileURL) {
+    NSString *name = fileURL.lastPathComponent;
+    if (name.length == 0) return;
+    NSString *directory = VCRRecordingDirectory();
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSMutableArray<NSString *> *names = [NSMutableArray array];
+    NSString *existing = [NSString stringWithContentsOfFile:VCRTelegramSentIndexPath()
+                                                  encoding:NSUTF8StringEncoding error:nil];
+    for (NSString *line in [existing componentsSeparatedByString:@"\n"]) {
+        NSString *kept = [line stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        if (kept.length == 0 || [kept isEqualToString:name]) continue;
+        if (![fm fileExistsAtPath:[directory stringByAppendingPathComponent:kept]]) continue;
+        [names addObject:kept];
+    }
+    [names addObject:name];
+    while (names.count > VCRTelegramSentIndexMax) [names removeObjectAtIndex:0];
+    [[names componentsJoinedByString:@"\n"] writeToFile:VCRTelegramSentIndexPath()
+                                              atomically:YES encoding:NSUTF8StringEncoding error:nil];
+}
+
+// One place that uploads and then remembers, so every send path (a finished capture, Send Latest, Send All)
+// feeds the index the same way. The index only ever hears about files the API accepted.
+static void VCRTelegramSendAndRemember(NSURL *fileURL, NSString *kind) {
+    VCRTelegramSendFileCompleted(fileURL, kind, nil, ^(BOOL delivered) {
+        if (delivered) VCRTelegramRememberSent(fileURL);
+    });
+}
+
 // Every media file in the recordings folder, oldest first, so a bulk upload reads chronologically.
 static NSArray<NSURL *> *VCRAllRecordingURLs(void) {
     NSURL *dir = [NSURL fileURLWithPath:VCRRecordingDirectory() isDirectory:YES];
@@ -756,23 +807,41 @@ static NSArray<NSURL *> *vcrSendAllQueue = nil;
 static NSUInteger vcrSendAllIndex = 0;
 static NSUInteger vcrSendAllSent = 0;
 static NSUInteger vcrSendAllFailed = 0;
+static NSUInteger vcrSendAllSkipped = 0;
 
 static void VCRTelegramSendAllStep(void);
+static void VCRTelegramSendAllFinish(void);
+
+// Runs after the last request has had time to answer, so the count is what the API said, not what was
+// fired off.
+static void VCRTelegramSendAllFinish(void) {
+    if (vcrSendAllQueue == nil) return;
+    NSString *summary = [NSString stringWithFormat:@"done: sent=%lu failed=%lu skipped=%lu of %lu",
+                         (unsigned long)vcrSendAllSent, (unsigned long)vcrSendAllFailed,
+                         (unsigned long)vcrSendAllSkipped, (unsigned long)vcrSendAllQueue.count];
+    VCRStickyNote(@"debugTelegramAll", summary);
+    VCRDebugEvent([NSString stringWithFormat:@"telegram: %@", summary]);
+    vcrSendAllQueue = nil;
+}
 
 static void VCRTelegramSendAllStep(void) {
     if (vcrSendAllQueue == nil) return;
     if (vcrSendAllIndex >= vcrSendAllQueue.count) {
-        NSString *summary = [NSString stringWithFormat:@"done: sent=%lu failed=%lu of %lu",
-                             (unsigned long)vcrSendAllSent, (unsigned long)vcrSendAllFailed,
-                             (unsigned long)vcrSendAllQueue.count];
-        VCRStickyNote(@"debugTelegramAll", summary);
-        VCRDebugEvent([NSString stringWithFormat:@"telegram: %@", summary]);
-        vcrSendAllQueue = nil;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            VCRTelegramSendAllFinish();
+        });
         return;
     }
     NSURL *file = vcrSendAllQueue[vcrSendAllIndex++];
-    if (VCRTelegramSendFile(file, VCRTelegramKindForPath(file.path), nil)) vcrSendAllSent++;
-    else vcrSendAllFailed++;
+    // Counted on the API's answer, and the index only hears about delivered files.
+    VCRTelegramSendFileCompleted(file, VCRTelegramKindForPath(file.path), nil, ^(BOOL delivered) {
+        if (delivered) {
+            vcrSendAllSent++;
+            VCRTelegramRememberSent(file);
+        } else {
+            vcrSendAllFailed++;
+        }
+    });
     // 1.2 s per file: well under the per-chat rate limit even for a folder of hundreds.
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         VCRTelegramSendAllStep();
@@ -780,26 +849,44 @@ static void VCRTelegramSendAllStep(void) {
 }
 
 static void VCRTelegramSendAllRecordings(void) {
-    vcrSendAllQueue = VCRAllRecordingURLs();
+    NSArray<NSURL *> *all = VCRAllRecordingURLs();
+    NSUInteger skipped = 0;
+    if (VCRTelegramSkipsSent()) {
+        NSSet<NSString *> *already = VCRTelegramSentNames();
+        NSMutableArray<NSURL *> *fresh = [NSMutableArray array];
+        for (NSURL *url in all) {
+            if ([already containsObject:url.lastPathComponent]) skipped++;
+            else [fresh addObject:url];
+        }
+        all = fresh;
+    }
+    vcrSendAllQueue = all;
     vcrSendAllIndex = 0;
     vcrSendAllSent = 0;
     vcrSendAllFailed = 0;
+    vcrSendAllSkipped = skipped;
     if (vcrSendAllQueue.count == 0) {
+        NSString *nothing = skipped > 0
+            ? [NSString stringWithFormat:@"nothing new: all %lu recordings were already sent",
+               (unsigned long)skipped]
+            : @"no recordings found";
         vcrSendAllQueue = nil;
-        VCRDebugEvent(@"telegram: nothing to send, the recordings folder holds no media files");
-        VCRStickyNote(@"debugTelegramAll", @"no recordings found");
+        VCRStickyNote(@"debugTelegramAll", nothing);
+        VCRDebugEvent([NSString stringWithFormat:@"telegram: %@", nothing]);
         return;
     }
-    VCRStickyNote(@"debugTelegramAll", [NSString stringWithFormat:@"sending %lu files",
-                                        (unsigned long)vcrSendAllQueue.count]);
-    VCRDebugEvent([NSString stringWithFormat:@"telegram: sending all %lu recordings, one message each",
-                   (unsigned long)vcrSendAllQueue.count]);
+    NSString *opening = skipped > 0
+        ? [NSString stringWithFormat:@"sending %lu new files (%lu already sent, skipped)",
+           (unsigned long)vcrSendAllQueue.count, (unsigned long)skipped]
+        : [NSString stringWithFormat:@"sending %lu files", (unsigned long)vcrSendAllQueue.count];
+    VCRStickyNote(@"debugTelegramAll", opening);
+    VCRDebugEvent([NSString stringWithFormat:@"telegram: %@, one message each", opening]);
     VCRTelegramSendAllStep();
 }
 
 static void VCRUploadFinishedCapture(NSURL *fileURL) {
     if (!fileURL) return;
-    VCRTelegramSendFile(fileURL, VCRTelegramKindForPath(fileURL.path), nil);
+    VCRTelegramSendAndRemember(fileURL, VCRTelegramKindForPath(fileURL.path));
 }
 
 // AVAudioRecorder's delegate was never set before, so nothing reported when the m4a was finalised.
@@ -2423,7 +2510,9 @@ static void VCRSchedulePrefsReload(void) {
                 VCRDebugEvent(@"telegram: no recording found");
                 return;
             }
-            VCRTelegramSendFile(newest, VCRTelegramKindForPath(newest.path), nil);
+            // An explicit single-file send is never skipped, but it does feed the index so a later
+            // "Send All" knows this one already went out.
+            VCRTelegramSendAndRemember(newest, VCRTelegramKindForPath(newest.path));
         });
         notify_register_dispatch("com.yourname.volumechordrecorder.telegramsendlall", &vcrTelegramAllToken, dispatch_get_main_queue(), ^(__unused int t) {
             @try {

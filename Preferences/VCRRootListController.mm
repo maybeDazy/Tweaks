@@ -564,11 +564,11 @@ __attribute__((constructor)) static void VCRPrefsInstallExceptionHandler(void) {
         if ([@[@"m4a", @"wav", @"mp4", @"mov", @"jpg", @"jpeg", @"png"] containsObject:name.pathExtension.lowercaseString]) count++;
     }
     notify_post("com.yourname.volumechordrecorder.telegramsendlall");
+    NSString *tail = @"Sending the recordings that have not gone out yet (\"Skip Already Sent\"), one Telegram "
+                      "message each, about a second apart. \"Show Debug Log\" reports every file and the final count.";
     NSString *message = count > 0
-        ? [NSString stringWithFormat:@"Sending %lu recordings, one Telegram message each (about a second apart). "
-           "\"Show Debug Log\" reports every file and the final count.", (unsigned long)count]
-        : @"Sending every recording, one Telegram message each (about a second apart). "
-           "\"Show Debug Log\" reports every file and the final count.";
+        ? [NSString stringWithFormat:@"The folder holds %lu recordings. %@", (unsigned long)count, tail]
+        : tail;
     [self showAlertWithTitle:@"Telegram" message:message];
 }
 

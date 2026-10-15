@@ -381,8 +381,13 @@ VolumeChordRecorderPrefs
    - `Delete All Recordings`: `/var/mobile/Media/VolumeChordRecorder` 안의 `.m4a` 파일 전체 삭제
    - `Send All Recordings` (Telegram Upload 그룹): 폴더의 모든 미디어 파일(`.m4a/.wav/.mp4/.mov/.jpg/.png`)을
      시간순으로 1건씩 전송. 파일당 약 1.2초 간격(Bot API 채팅 레이트리밋 대응), 진행 상황과 최종
-     `sent/failed` 집계는 `Show Debug Log`의 `debugTelegramAll`에 기록됩니다. 설정 패널은 파일 개수만
+     `sent/failed/skipped` 집계는 `Show Debug Log`의 `debugTelegramAll`에 기록됩니다. 설정 패널은 파일 개수만
      세어 알림창에 보여주고, 실제 업로드는 SpringBoard 안에서 실행됩니다.
+   - `Skip Already Sent` 스위치(기본 켜짐): `Send All`은 **아직 안 나간 파일만** 보냅니다. Telegram API가
+     실제로 접수한 파일 이름을 녹음 폴더의 숨김 파일 `.telegram-sent.txt`에 기록하고(설정 도메인이 아니라
+     폴더 안 — SpringBoard가 쓸 수 있는 위치), 목록은 삭제된 파일을 자동 정리하며 2000개로 제한됩니다.
+     끄면 폴더 전체를 다시 보냅니다. `Send Latest Recording`은 스위치와 무관하게 항상 전송하며, 전송에
+     성공하면 마찬가지로 기록되어 이후 `Send All`에서 건너뜁니다.
 
 녹음 저장 위치:
 

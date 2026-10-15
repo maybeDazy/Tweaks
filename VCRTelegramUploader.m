@@ -70,6 +70,10 @@ BOOL VCRTelegramIsEnabled(void) {
     return [VCRTGPref(@"telegramEnabled", @NO) boolValue] && VCRTGToken().length > 0 && VCRTGChat().length > 0;
 }
 
+BOOL VCRTelegramSkipsSent(void) {
+    return [VCRTGPref(@"telegramSkipSent", @YES) boolValue];
+}
+
 static void VCRTGLog(VCRTelegramLogBlock log, NSString *format, ...) {
     VCRTelegramLogBlock handler = log ?: gVCRTGLogger;
     if (!handler) return;
@@ -80,24 +84,29 @@ static void VCRTGLog(VCRTelegramLogBlock log, NSString *format, ...) {
     handler(message);
 }
 
-static void VCRTGReportResult(NSDictionary *json, NSInteger status, NSString *method, VCRTelegramLogBlock log) {
+static void VCRTGReportResult(NSDictionary *json, NSInteger status, NSString *method, VCRTelegramLogBlock log,
+                              void (^completion)(BOOL delivered)) {
     if (status == 200 && [json[@"ok"] boolValue]) {
         VCRTGLog(log, @"telegram: %@ ok", method);
+        if (completion) completion(YES);
         return;
     }
     NSString *description = [json[@"description"] isKindOfClass:[NSString class]] ? json[@"description"] : @"(no description)";
     VCRTGLog(log, @"telegram: %@ failed status=%ld %@", method, (long)status, description);
+    if (completion) completion(NO);
 }
 
-static void VCRTGHandleResponse(NSData *data, NSURLResponse *response, NSError *error, NSString *method, VCRTelegramLogBlock log) {
+static void VCRTGHandleResponse(NSData *data, NSURLResponse *response, NSError *error, NSString *method,
+                                VCRTelegramLogBlock log, void (^completion)(BOOL delivered)) {
     if (error) {
         VCRTGLog(log, @"telegram: %@ failed %@", method, error.localizedDescription);
+        if (completion) completion(NO);
         return;
     }
     NSInteger status = [(NSHTTPURLResponse *)response statusCode];
     NSDictionary *json = nil;
     if (data.length) json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
-    VCRTGReportResult([json isKindOfClass:[NSDictionary class]] ? json : nil, status, method, log);
+    VCRTGReportResult([json isKindOfClass:[NSDictionary class]] ? json : nil, status, method, log, completion);
 }
 
 void VCRTelegramSendText(NSString *text, VCRTelegramLogBlock log) {
@@ -119,19 +128,25 @@ void VCRTelegramSendText(NSString *text, VCRTelegramLogBlock log) {
     NSURLSession *session = [NSURLSession sessionWithConfiguration:[NSURLSessionConfiguration ephemeralSessionConfiguration]];
     NSURLSessionUploadTask *task = [session uploadTaskWithRequest:request fromData:body
                                                 completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
-        VCRTGHandleResponse(data, response, error, @"sendMessage", log);
+        VCRTGHandleResponse(data, response, error, @"sendMessage", log, nil);
     }];
     [task resume];
 }
 
-BOOL VCRTelegramSendFile(NSURL *fileURL, NSString *kind, VCRTelegramLogBlock log) {
-    if (!fileURL) return NO;
+BOOL VCRTelegramSendFileCompleted(NSURL *fileURL, NSString *kind, VCRTelegramLogBlock log,
+                                  void (^completion)(BOOL delivered)) {
+    if (!fileURL) {
+        if (completion) completion(NO);
+        return NO;
+    }
     if (!VCRTelegramIsEnabled()) {
         VCRTGLog(log, @"telegram: disabled or unconfigured, skipping %@", fileURL.lastPathComponent);
+        if (completion) completion(NO);
         return NO;
     }
     if (!VCRTelegramWantsKind(kind)) {
         VCRTGLog(log, @"telegram: kind %@ turned off, skipping", kind);
+        if (completion) completion(NO);
         return NO;
     }
 
@@ -140,11 +155,13 @@ BOOL VCRTelegramSendFile(NSURL *fileURL, NSString *kind, VCRTelegramLogBlock log
     unsigned long long bytes = size.unsignedLongLongValue;
     if (bytes == 0) {
         VCRTGLog(log, @"telegram: %@ is missing or empty", fileURL.lastPathComponent);
+        if (completion) completion(NO);
         return NO;
     }
     if (bytes > VCRTelegramMaxUploadBytes) {
         VCRTGLog(log, @"telegram: skipped %@ (%.1f MB over the %.0f MB bot limit)",
                  fileURL.lastPathComponent, bytes / 1048576.0, VCRTelegramMaxUploadBytes / 1048576.0);
+        if (completion) completion(NO);
         return NO;
     }
 
@@ -170,6 +187,7 @@ BOOL VCRTelegramSendFile(NSURL *fileURL, NSString *kind, VCRTelegramLogBlock log
     [fm removeItemAtPath:bodyPath error:nil];
     if (![fm createFileAtPath:bodyPath contents:prologue attributes:nil]) {
         VCRTGLog(log, @"telegram: cannot create the multipart body file");
+        if (completion) completion(NO);
         return NO;
     }
 
@@ -180,6 +198,7 @@ BOOL VCRTelegramSendFile(NSURL *fileURL, NSString *kind, VCRTelegramLogBlock log
         [source closeFile];
         [fm removeItemAtPath:bodyPath error:nil];
         VCRTGLog(log, @"telegram: cannot read %@", fileURL.path);
+        if (completion) completion(NO);
         return NO;
     }
 
@@ -198,6 +217,7 @@ BOOL VCRTelegramSendFile(NSURL *fileURL, NSString *kind, VCRTelegramLogBlock log
         [source closeFile];
         [fm removeItemAtPath:bodyPath error:nil];
         VCRTGLog(log, @"telegram: building the body failed %@", exception.reason);
+        if (completion) completion(NO);
         return NO;
     }
     [handle closeFile];
@@ -216,8 +236,13 @@ BOOL VCRTelegramSendFile(NSURL *fileURL, NSString *kind, VCRTelegramLogBlock log
     NSURLSessionUploadTask *task = [session uploadTaskWithRequest:request fromFile:[NSURL fileURLWithPath:bodyPath]
                                                 completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
         [[NSFileManager defaultManager] removeItemAtPath:bodyPath error:nil];
-        VCRTGHandleResponse(data, response, error, method, log);
+        VCRTGHandleResponse(data, response, error, method, log, completion);
     }];
     [task resume];
     return YES;
+}
+
+// The plain entry point: callers that only want the log lines keep their old call shape.
+BOOL VCRTelegramSendFile(NSURL *fileURL, NSString *kind, VCRTelegramLogBlock log) {
+    return VCRTelegramSendFileCompleted(fileURL, kind, log, nil);
 }

@@ -154,6 +154,41 @@ for _src in (T, MM):
         _media_lists.append(_src[_at:_src.find("]", _at)])
         _at = _src.find('[NSSet setWithArray:@[@"m4a"', _at + 1)
 _media_lists_all_wav = bool(_media_lists) and all('@"wav"' in _list for _list in _media_lists)
+_sent_switch = cell_for_key("telegramSkipSent")
+check("the Skip Already Sent switch exists and defaults to on",
+      _sent_switch is not None and _sent_switch.get("default") is True,
+      "the switch must ship on: a folder that was uploaded once should not go out again on every tap")
+check("the sent index is a hidden file next to the recordings, not a preference",
+      has('@".telegram-sent.txt"') and "VCRRecordingDirectory()" in T[T.find("VCRTelegramSentIndexPath"):][:200] and
+      "telegramSent" not in PLIST_TEXT,
+      "the preference domain is shared with Settings and must not grow a line per recording")
+_up = read_text("VCRTelegramUploader.m")
+_up_send = _up[_up.find("BOOL VCRTelegramSendFileCompleted("):_up.find("// The plain entry point")]
+check("the uploader reports the HTTP outcome, not just that a request started",
+      "if (completion) completion(YES);" in _up and
+      _up_send.count("return NO;") >= 6 and
+      _up_send.count("return NO;") == _up_send.count("if (completion) completion(NO);"),
+      "refusals=%d completion=%d - every early exit in the send path must tell the caller 'not delivered' "
+      "and the accepted path must say yes, otherwise the sent index is fed by guesses"
+      % (_up_send.count("return NO;"), _up_send.count("if (completion) completion(NO);")))
+check("only files the API accepted are recorded as sent",
+      has("static void VCRTelegramSendAndRemember(NSURL *fileURL, NSString *kind) {") and
+      T.count("VCRTelegramSendAndRemember(") >= 3 and
+      "if (delivered) VCRTelegramRememberSent(fileURL);" in T and
+      "VCRTelegramRememberSent(file);" in T and
+      "if (delivered) {" in T,
+      "a started request is not a delivered file: the index has to be fed from the API's answer, from "
+      "every send path (a finished capture, Send Latest, Send All)")
+check("the sent index prunes deleted files and stays bounded",
+      has("VCRTelegramSentIndexMax") and has("while (names.count > VCRTelegramSentIndexMax)") and
+      "if (![fm fileExistsAtPath:[directory stringByAppendingPathComponent:kept]]) continue;" in T,
+      "the folder is pruned by hand, so the index has to follow it or it would keep names of files that "
+      "no longer exist forever")
+check("Send Latest still sends the newest file on purpose",
+      "explicit single-file send is never skipped" in T and
+      "if (VCRTelegramSkipsSent())" in T,
+      "the skip belongs to the bulk walk: a button that always uploads the newest file must keep doing so, "
+      "otherwise there is no way to force one file out")
 check("the bulk sender never uses a block that captures itself (ARC calls that a retain cycle)",
       "__block void (^step)(void)" not in T and
       has("static void VCRTelegramSendAllStep(void) {") and
