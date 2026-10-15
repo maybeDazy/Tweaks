@@ -663,7 +663,7 @@
 			<key>label</key>
 			<string>Telegram Upload</string>
 			<key>footerText</key>
-			<string>Bot API uploads are capped at 50 MB, so 4K/60 clips are skipped and noted in the debug log. The token is stored in this preferences file in plain text. Both buttons run the uploader inside SpringBoard and report into "Show Debug Log".</string>
+			<string>Bot API uploads are capped at 50 MB, so 4K/60 clips are skipped and noted in the debug log. The token is stored in this preferences file in plain text. The buttons run the uploader inside SpringBoard and report into "Show Debug Log": Send All walks every recording in the folder, one Telegram message per file, about a second apart.</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -766,6 +766,14 @@
 			<string>Send Latest Recording</string>
 			<key>action</key>
 			<string>sendTelegramLatest</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>Send All Recordings</string>
+			<key>action</key>
+			<string>sendTelegramAll</string>
 		</dict>
 	</array>
 </dict>

@@ -134,6 +134,31 @@ check("telegram settings cells exist",
                                     "telegramSendAudio", "telegramSendVideo", "telegramSendPhoto"]))
 check("telegram test button wired", any(c.get("action") == "sendTelegramTest" for c in CELLS))
 check("telegram send-latest button wired", any(c.get("action") == "sendTelegramLatest" for c in CELLS))
+check("the Send All Recordings button is wired end to end",
+      any(c.get("action") == "sendTelegramAll" for c in CELLS) and
+      has("sendTelegramAll", MM) and
+      has('notify_register_dispatch("com.yourname.volumechordrecorder.telegramsendlall"') and
+      has("static void VCRTelegramSendAllRecordings(void)"),
+      "a Settings button that does nothing is worse than none: the row, the pane action and the "
+      "SpringBoard handler all have to exist")
+check("the bulk sender walks media files only, oldest first, one message at a time",
+      has("static NSArray<NSURL *> *VCRAllRecordingURLs(void)") and
+      has('@"m4a", @"wav"') and has("sortUsingComparator") and
+      has("1.2 * NSEC_PER_SEC") and has('VCRStickyNote(@"debugTelegramAll"'),
+      "the folder also holds logs and the daemon files, so the walk has to filter by media extension; the "
+      "Bot API rate-limits a chat, hence the spacing and the progress note")
+_media_lists = []
+for _src in (T, MM):
+    _at = _src.find('[NSSet setWithArray:@[@"m4a"')
+    while _at >= 0:
+        _media_lists.append(_src[_at:_src.find("]", _at)])
+        _at = _src.find('[NSSet setWithArray:@[@"m4a"', _at + 1)
+_media_lists_all_wav = bool(_media_lists) and all('@"wav"' in _list for _list in _media_lists)
+check("every media extension list in the tree includes wav",
+      _media_lists_all_wav and "static NSSet<NSString *> *VCRMediaExtensions(void)" in T
+      and T.count("VCRMediaExtensions()") == 2,
+      "lists=%s - a Linear PCM capture lands as .wav: any list without it (the newest lookup, the bulk "
+      "sender, the recordings list, the Settings count) silently ignores those files" % (_media_lists,))
 check("telegram buttons are implemented in the bundle",
       has("sendTelegramTest", MM) and has("sendTelegramLatest", MM))
 

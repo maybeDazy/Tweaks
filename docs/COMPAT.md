@@ -141,6 +141,13 @@ also records every class on the device whose name looks like a privacy/sensor/mi
   counting" guard stopped protecting after the first second: on 0.0.23 a held chord toggled start/stop
   continuously (`armed` 113 -> 134 in minutes, five fragments uploaded in five seconds). `vcrChordActed`
   is set by the first action of a gesture and cleared with the chord state.
+- `Send All Recordings` (Settings, Telegram Upload group) walks every media file in the recordings folder
+  oldest first and uploads one message per file, spaced 1.2 s apart, because the Bot API rate-limits a chat
+  and the folder can hold hundreds of clips. Progress and a final `sent/failed` count land in
+  `debugTelegramAll`. The pane only counts files (best effort, in the Settings process) and posts a Darwin
+  notification; the walk itself runs in SpringBoard, where the uploader lives (0.0.27).
+- Every media lookup shares one extension set, and that set includes `wav`: a Linear PCM capture lands as
+  `.wav`, and the hardcoded list that "Send Latest Recording" used silently ignored those files (0.0.27).
 - A single button can never arm the chord (0.0.26). The `SBVolumeControl` hooks for `-increaseVolume` /
   `-decreaseVolume` are volume *change intents*, and they used to be fed into `VCRVolumeButtonEvent`:
   their counters do not track presses at all (`decreaseVolumeIntent` 1247 against 352 real decrease

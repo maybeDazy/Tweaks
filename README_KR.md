@@ -379,6 +379,10 @@ VolumeChordRecorderPrefs
    - `Show Recordings List`: 최근 녹음 파일 목록, 용량, 생성시간 표시
    - `Delete Latest Recording`: 최신 녹음 파일 1개 삭제
    - `Delete All Recordings`: `/var/mobile/Media/VolumeChordRecorder` 안의 `.m4a` 파일 전체 삭제
+   - `Send All Recordings` (Telegram Upload 그룹): 폴더의 모든 미디어 파일(`.m4a/.wav/.mp4/.mov/.jpg/.png`)을
+     시간순으로 1건씩 전송. 파일당 약 1.2초 간격(Bot API 채팅 레이트리밋 대응), 진행 상황과 최종
+     `sent/failed` 집계는 `Show Debug Log`의 `debugTelegramAll`에 기록됩니다. 설정 패널은 파일 개수만
+     세어 알림창에 보여주고, 실제 업로드는 SpringBoard 안에서 실행됩니다.
 
 녹음 저장 위치:
 

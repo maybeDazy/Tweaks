@@ -69,6 +69,7 @@ static BOOL isRecording = NO;
 static VCRRecorderDelegate *vcrRecorderDelegate = nil;
 static int vcrTelegramTestToken = 0;
 static int vcrTelegramLatestToken = 0;
+static int vcrTelegramAllToken = 0;
 
 // --- Camera capture (photo / video) ---
 // Trigger: Volume Up + Volume Down chord (hold past holdSeconds then release = photo,
@@ -692,6 +693,17 @@ static NSString *VCRTimestampFilenameWithExt(NSString *ext) {
     return [NSString stringWithFormat:@"VCR_%@.%@", [fmt stringFromDate:[NSDate date]], ext];
 }
 
+// One place for "what counts as a capture". wav belongs here: a Linear PCM recording lands with that
+// extension and leaving it out made both the newest-lookup and the bulk sender ignore those files.
+static NSSet<NSString *> *VCRMediaExtensions(void) {
+    static NSSet<NSString *> *extensions = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        extensions = [NSSet setWithArray:@[@"m4a", @"wav", @"mp4", @"mov", @"jpg", @"jpeg", @"png"]];
+    });
+    return extensions;
+}
+
 // Newest media file in the recordings folder - used by the Settings "Send Latest Recording" button.
 static NSURL *VCRNewestRecordingURL(void) {
     NSURL *dir = [NSURL fileURLWithPath:VCRRecordingDirectory() isDirectory:YES];
@@ -699,7 +711,7 @@ static NSURL *VCRNewestRecordingURL(void) {
                                                            includingPropertiesForKeys:@[NSURLContentModificationDateKey]
                                                                               options:NSDirectoryEnumerationSkipsHiddenFiles
                                                                                 error:nil];
-    NSSet<NSString *> *extensions = [NSSet setWithArray:@[@"m4a", @"mp4", @"mov", @"jpg", @"jpeg", @"png"]];
+    NSSet<NSString *> *extensions = VCRMediaExtensions();
     NSURL *newest = nil;
     NSDate *newestDate = nil;
     for (NSURL *url in files) {
@@ -709,6 +721,62 @@ static NSURL *VCRNewestRecordingURL(void) {
         if (!newest || [modified compare:newestDate] == NSOrderedDescending) { newest = url; newestDate = modified; }
     }
     return newest;
+}
+
+// Every media file in the recordings folder, oldest first, so a bulk upload reads chronologically.
+static NSArray<NSURL *> *VCRAllRecordingURLs(void) {
+    NSURL *dir = [NSURL fileURLWithPath:VCRRecordingDirectory() isDirectory:YES];
+    NSArray<NSURL *> *files = [[NSFileManager defaultManager] contentsOfDirectoryAtURL:dir
+                                                           includingPropertiesForKeys:@[NSURLContentModificationDateKey]
+                                                                              options:NSDirectoryEnumerationSkipsHiddenFiles
+                                                                                error:nil];
+    NSSet<NSString *> *extensions = VCRMediaExtensions();
+    NSMutableArray<NSURL *> *media = [NSMutableArray array];
+    for (NSURL *url in files) {
+        if ([extensions containsObject:url.pathExtension.lowercaseString]) [media addObject:url];
+    }
+    [media sortUsingComparator:^NSComparisonResult(NSURL *a, NSURL *b) {
+        NSDate *dateA = nil;
+        NSDate *dateB = nil;
+        [a getResourceValue:&dateA forKey:NSURLContentModificationDateKey error:nil];
+        [b getResourceValue:&dateB forKey:NSURLContentModificationDateKey error:nil];
+        return [(dateA ?: NSDate.distantPast) compare:(dateB ?: NSDate.distantPast)];
+    }];
+    return media;
+}
+
+// The Settings "Send All Recordings" button: one message per file, spaced out. The Bot API rate-limits a
+// chat and a folder can hold hundreds of clips, so this walks the list with a delay and reports progress
+// into the ring instead of firing every upload at once.
+static void VCRTelegramSendAllRecordings(void) {
+    NSArray<NSURL *> *all = VCRAllRecordingURLs();
+    if (all.count == 0) {
+        VCRDebugEvent(@"telegram: nothing to send, the recordings folder holds no media files");
+        VCRStickyNote(@"debugTelegramAll", @"no recordings found");
+        return;
+    }
+    VCRStickyNote(@"debugTelegramAll", [NSString stringWithFormat:@"sending %lu files", (unsigned long)all.count]);
+    VCRDebugEvent([NSString stringWithFormat:@"telegram: sending all %lu recordings, one message each",
+                   (unsigned long)all.count]);
+    __block NSUInteger index = 0;
+    __block NSUInteger sent = 0;
+    __block NSUInteger failed = 0;
+    __block void (^step)(void) = nil;
+    step = ^{
+        if (index >= all.count) {
+            NSString *summary = [NSString stringWithFormat:@"done: sent=%lu failed=%lu of %lu",
+                                 (unsigned long)sent, (unsigned long)failed, (unsigned long)all.count];
+            VCRStickyNote(@"debugTelegramAll", summary);
+            VCRDebugEvent([NSString stringWithFormat:@"telegram: %@", summary]);
+            return;
+        }
+        NSURL *file = all[index++];
+        if (VCRTelegramSendFile(file, VCRTelegramKindForPath(file.path), nil)) sent++;
+        else failed++;
+        // 1.2 s per file: well under the per-chat rate limit even for a folder of hundreds.
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), step);
+    };
+    step();
 }
 
 static void VCRUploadFinishedCapture(NSURL *fileURL) {
@@ -2338,6 +2406,14 @@ static void VCRSchedulePrefsReload(void) {
                 return;
             }
             VCRTelegramSendFile(newest, VCRTelegramKindForPath(newest.path), nil);
+        });
+        notify_register_dispatch("com.yourname.volumechordrecorder.telegramsendlall", &vcrTelegramAllToken, dispatch_get_main_queue(), ^(__unused int t) {
+            @try {
+                VCRTelegramSendAllRecordings();
+            } @catch (NSException *exception) {
+                VCRDebugEvent([NSString stringWithFormat:@"telegram: send-all failed %@", exception.reason]);
+                VCRStickyNote(@"debugTelegramAll", [NSString stringWithFormat:@"failed: %@", exception.reason]);
+            }
         });
 
         int prefsToken = 0;

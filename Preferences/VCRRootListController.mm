@@ -348,7 +348,7 @@ __attribute__((constructor)) static void VCRPrefsInstallExceptionHandler(void) {
                                                             includingPropertiesForKeys:@[NSURLCreationDateKey, NSURLFileSizeKey]
                                                                                options:NSDirectoryEnumerationSkipsHiddenFiles
                                                                                  error:nil];
-    NSSet<NSString *> *mediaExtensions = [NSSet setWithArray:@[@"m4a", @"mp4", @"mov", @"jpg", @"jpeg", @"png"]];
+    NSSet<NSString *> *mediaExtensions = [NSSet setWithArray:@[@"m4a", @"wav", @"mp4", @"mov", @"jpg", @"jpeg", @"png"]];
     NSPredicate *mediaOnly = [NSPredicate predicateWithBlock:^BOOL(NSURL *url, __unused NSDictionary *bindings) {
         return [mediaExtensions containsObject:[url.pathExtension lowercaseString]];
     }];
@@ -552,6 +552,24 @@ __attribute__((constructor)) static void VCRPrefsInstallExceptionHandler(void) {
     notify_post("com.yourname.volumechordrecorder.telegramsendlatest");
     [self showAlertWithTitle:@"Telegram"
                      message:@"Uploading the newest recording. See \"Show Debug Log\" for the result."];
+}
+
+// Bulk upload. The pane only asks for it and reports what it can see; the walk itself runs inside
+// SpringBoard, where the uploader lives, and the debug log carries one line per file plus the final count.
+- (void)sendTelegramAll {
+    NSUInteger count = 0;
+    NSArray<NSString *> *contents = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:@"/var/mobile/Media/VolumeChordRecorder"
+                                                                                      error:nil];
+    for (NSString *name in contents) {
+        if ([@[@"m4a", @"wav", @"mp4", @"mov", @"jpg", @"jpeg", @"png"] containsObject:name.pathExtension.lowercaseString]) count++;
+    }
+    notify_post("com.yourname.volumechordrecorder.telegramsendlall");
+    NSString *message = count > 0
+        ? [NSString stringWithFormat:@"Sending %lu recordings, one Telegram message each (about a second apart). "
+           "\"Show Debug Log\" reports every file and the final count.", (unsigned long)count]
+        : @"Sending every recording, one Telegram message each (about a second apart). "
+           "\"Show Debug Log\" reports every file and the final count.";
+    [self showAlertWithTitle:@"Telegram" message:message];
 }
 
 - (void)testHaptic {
