@@ -154,6 +154,13 @@ for _src in (T, MM):
         _media_lists.append(_src[_at:_src.find("]", _at)])
         _at = _src.find('[NSSet setWithArray:@[@"m4a"', _at + 1)
 _media_lists_all_wav = bool(_media_lists) and all('@"wav"' in _list for _list in _media_lists)
+check("the bulk sender never uses a block that captures itself (ARC calls that a retain cycle)",
+      "__block void (^step)(void)" not in T and
+      has("static void VCRTelegramSendAllStep(void) {") and
+      T.count("VCRTelegramSendAllStep();") == 2 and
+      has("dispatch_get_main_queue(), ^{\n        VCRTelegramSendAllStep();"),
+      "the build runs with -Werror and -Warc-retain-cycles: the walk must reschedule a C step, not call "
+      "a block that captured itself (this failed CI once)")
 check("every media extension list in the tree includes wav",
       _media_lists_all_wav and "static NSSet<NSString *> *VCRMediaExtensions(void)" in T
       and T.count("VCRMediaExtensions()") == 2,

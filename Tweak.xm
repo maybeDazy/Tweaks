@@ -748,35 +748,53 @@ static NSArray<NSURL *> *VCRAllRecordingURLs(void) {
 // The Settings "Send All Recordings" button: one message per file, spaced out. The Bot API rate-limits a
 // chat and a folder can hold hundreds of clips, so this walks the list with a delay and reports progress
 // into the ring instead of firing every upload at once.
+//
+// The walk is a C function that reschedules itself rather than a block that calls itself: ARC treats a
+// self-capturing block as a retain cycle and the build runs with -Werror. The cursor is static because a
+// second tap should restart the walk, not interleave two of them.
+static NSArray<NSURL *> *vcrSendAllQueue = nil;
+static NSUInteger vcrSendAllIndex = 0;
+static NSUInteger vcrSendAllSent = 0;
+static NSUInteger vcrSendAllFailed = 0;
+
+static void VCRTelegramSendAllStep(void);
+
+static void VCRTelegramSendAllStep(void) {
+    if (vcrSendAllQueue == nil) return;
+    if (vcrSendAllIndex >= vcrSendAllQueue.count) {
+        NSString *summary = [NSString stringWithFormat:@"done: sent=%lu failed=%lu of %lu",
+                             (unsigned long)vcrSendAllSent, (unsigned long)vcrSendAllFailed,
+                             (unsigned long)vcrSendAllQueue.count];
+        VCRStickyNote(@"debugTelegramAll", summary);
+        VCRDebugEvent([NSString stringWithFormat:@"telegram: %@", summary]);
+        vcrSendAllQueue = nil;
+        return;
+    }
+    NSURL *file = vcrSendAllQueue[vcrSendAllIndex++];
+    if (VCRTelegramSendFile(file, VCRTelegramKindForPath(file.path), nil)) vcrSendAllSent++;
+    else vcrSendAllFailed++;
+    // 1.2 s per file: well under the per-chat rate limit even for a folder of hundreds.
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        VCRTelegramSendAllStep();
+    });
+}
+
 static void VCRTelegramSendAllRecordings(void) {
-    NSArray<NSURL *> *all = VCRAllRecordingURLs();
-    if (all.count == 0) {
+    vcrSendAllQueue = VCRAllRecordingURLs();
+    vcrSendAllIndex = 0;
+    vcrSendAllSent = 0;
+    vcrSendAllFailed = 0;
+    if (vcrSendAllQueue.count == 0) {
+        vcrSendAllQueue = nil;
         VCRDebugEvent(@"telegram: nothing to send, the recordings folder holds no media files");
         VCRStickyNote(@"debugTelegramAll", @"no recordings found");
         return;
     }
-    VCRStickyNote(@"debugTelegramAll", [NSString stringWithFormat:@"sending %lu files", (unsigned long)all.count]);
+    VCRStickyNote(@"debugTelegramAll", [NSString stringWithFormat:@"sending %lu files",
+                                        (unsigned long)vcrSendAllQueue.count]);
     VCRDebugEvent([NSString stringWithFormat:@"telegram: sending all %lu recordings, one message each",
-                   (unsigned long)all.count]);
-    __block NSUInteger index = 0;
-    __block NSUInteger sent = 0;
-    __block NSUInteger failed = 0;
-    __block void (^step)(void) = nil;
-    step = ^{
-        if (index >= all.count) {
-            NSString *summary = [NSString stringWithFormat:@"done: sent=%lu failed=%lu of %lu",
-                                 (unsigned long)sent, (unsigned long)failed, (unsigned long)all.count];
-            VCRStickyNote(@"debugTelegramAll", summary);
-            VCRDebugEvent([NSString stringWithFormat:@"telegram: %@", summary]);
-            return;
-        }
-        NSURL *file = all[index++];
-        if (VCRTelegramSendFile(file, VCRTelegramKindForPath(file.path), nil)) sent++;
-        else failed++;
-        // 1.2 s per file: well under the per-chat rate limit even for a folder of hundreds.
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), step);
-    };
-    step();
+                   (unsigned long)vcrSendAllQueue.count]);
+    VCRTelegramSendAllStep();
 }
 
 static void VCRUploadFinishedCapture(NSURL *fileURL) {
